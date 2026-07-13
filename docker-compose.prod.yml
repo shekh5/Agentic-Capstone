@@ -1,0 +1,31 @@
+services:
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY}:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+# Used for DEPLOYMENT (EC2/server), not local dev.
+# Difference from docker-compose.yml:
+#   - "image:" pulls a pre-built image from GHCR instead of "build: ."
+#   - No public port for redis — only the app container talks to it
+#     internally over the Compose network, so it's not exposed externally.
+#
+# GITHUB_REPOSITORY should be set as an env var before running, e.g.:
+#   export GITHUB_REPOSITORY=your-username/your-repo
+#   docker compose -f docker-compose.prod.yml up -d
