@@ -44,3 +44,4 @@
 - Do not commit secrets or host-specific values.
 - Use environment variables such as `PORT` and `REDIS_URL` for runtime configuration.
 - Keep the `/health` endpoint stable because it is used by container and deployment checks.
+-
