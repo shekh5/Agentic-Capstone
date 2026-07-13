@@ -111,3 +111,76 @@ ruff check app tests
 - Add structured logging + tracing for each tool call (important for
   debugging agent behavior in production)
 - Add a staging environment + manual approval gate before prod deploy
+
+
+# reasoning_chain
+
+Plan → execute → verify/repair chain, built to drop into your existing
+FastAPI tool-calling service.
+
+## Wire it in
+
+```python
+# main.py (or wherever your FastAPI app is created)
+from reasoning_chain.router import router as chain_router
+app.include_router(chain_router, prefix="/chain")
+```
+
+Copy the `reasoning_chain/` folder next to your existing `app/` (or wherever
+your calculator/get_time/weather tools currently live), then delete
+`tools.py` here and point `chain.py`'s `TOOL_REGISTRY` import at your real
+tools instead — this version's tools are just instrumented copies with
+injectable failure so you can prove the resilience logic works.
+
+## Endpoints
+
+- `POST /chain/plan?goal=...` — decomposition only, no tools run. Use this
+  first to sanity-check the model's reasoning.
+- `POST /chain/run?goal=...` — full plan → execute → verify → repair loop.
+  Returns the entire trace.
+- `GET /chain/trace/{request_id}` — replay a past run from Redis.
+
+## Try it locally
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+uvicorn main:app --reload
+curl -X POST "http://localhost:8000/chain/plan?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
+curl -X POST "http://localhost:8000/chain/run?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
+```
+
+Run `/chain/run` a handful of times — the weather tool fails ~35% of the
+time on purpose. Watch the trace: you should see a retry, then either a
+successful recovery or an honest "couldn't confirm weather" in
+`final_summary`, never a hallucinated temperature.
+
+## Tests
+
+```bash
+pip install pytest --break-system-packages
+pytest reasoning_chain/test_chain.py -v
+```
+
+All LLM calls are mocked, so this runs in your existing CI (Python
+3.11/3.12 matrix) without needing an API key or network access.
+
+## What to look at once it's running
+
+1. **`/chain/plan`** — read the JSON. Does the model's decomposition make
+   sense for a goal you didn't anticipate? This is where you'll spend most
+   of your debugging time in real agent work.
+2. **Force a failure** — bump `WEATHER_FAILURE_RATE` in `tools.py` to `1.0`
+   temporarily and hit `/chain/run`. Confirm the circuit breaker kicks in
+   and `final_summary` is honest about what's missing, instead of the
+   model quietly making up a temperature.
+3. **`repair_rounds` in the trace** — this number should almost always be
+   0 or 1. If you ever see it climbing, that's your signal `MAX_REPAIR_ROUNDS`
+   or your verify prompt needs tightening — same instinct as noticing a CI
+   job that "usually passes on retry" and asking why it's flaky at all.
+
+## Next step (Phase 2 memory)
+
+Right now each run is stateless. Once you're ready, use the same Redis
+connection in `router.py` to store `ChainTrace` history keyed by a
+conversation/session id instead of only by `request_id` — that's your
+first real short-term memory system.

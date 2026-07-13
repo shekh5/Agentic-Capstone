@@ -1,10 +1,8 @@
 """
 Minimal Agentic Tool-Calling Service
 -------------------------------------
-A FastAPI service that exposes an /agent endpoint. The agent can call
-one of a few simple tools (calculator, get_time, get_weather_mock) to
-answer a user's request. This is intentionally small so the FOCUS of
-this project stays on Git/Docker/CI-CD, not on agent complexity.
+A FastAPI service that exposes an /agent endpoint and mounts the
+reasoning chain documented in README.md under /chain.
 """
 
 import math
@@ -16,9 +14,12 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from reasoning_chain.router import router as chain_router
+
 APP_VERSION = "1.0.0"
 
 app = FastAPI(title="Agentic Capstone Service", version=APP_VERSION)
+app.include_router(chain_router, prefix="/chain")
 
 
 # ---------- Tools the agent can call ----------
