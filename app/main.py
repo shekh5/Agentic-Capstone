@@ -16,7 +16,9 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="Agentic Capstone Service", version="1.0.0")
+APP_VERSION = "1.0.0"
+
+app = FastAPI(title="Agentic Capstone Service", version=APP_VERSION)
 
 
 # ---------- Tools the agent can call ----------
@@ -80,6 +82,11 @@ def health():
 @app.get("/")
 def root():
     return {"message": "Agentic Capstone Service is running", "tools": list(TOOLS.keys())}
+
+
+@app.get("/version")
+def version():
+    return {"version": APP_VERSION}
 
 
 @app.post("/agent", response_model=AgentResponse)

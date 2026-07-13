@@ -17,6 +17,12 @@ def test_root():
     assert "tools" in r.json()
 
 
+def test_version():
+    r = client.get("/version")
+    assert r.status_code == 200
+    assert r.json() == {"version": "1.0.0"}
+
+
 def test_agent_calculator():
     r = client.post("/agent", json={"tool": "calculator", "argument": "2 + 2"})
     assert r.status_code == 200
