@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic Capstone - Chat UI</title>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --chat-user-bg: #312e81;
+      --chat-agent-bg: #1e293b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 1200px;
+      height: 90vh;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 24px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Sidebar - History & Config */
+    .sidebar {
+      width: 320px;
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .sidebar-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar-header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #818cf8, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .sidebar-header p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .mode-selector {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .mode-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .mode-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+    }
+
+    .mode-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .history-item {
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 0.8rem;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .history-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Main Chat Interface */
+    .chat-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: rgba(15, 23, 42, 0.2);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 80%;
+      animation: fadeIn 0.3s ease forwards;
+    }
+
+    .message.user {
+      align-self: flex-end;
+    }
+
+    .message.agent {
+      align-self: flex-start;
+    }
+
+    .message-bubble {
+      padding: 14px 18px;
+      border-radius: 18px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .message.user .message-bubble {
+      background: var(--chat-user-bg);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.agent .message-bubble {
+      background: var(--chat-agent-bg);
+      color: var(--text-main);
+      border-bottom-left-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    .message-meta {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+      margin-left: 4px;
+      margin-right: 4px;
+    }
+
+    .message.user .message-meta {
+      text-align: right;
+    }
+
+    /* Chat Input Form */
+    .chat-input-container {
+      padding: 24px;
+      border-top: 1px solid var(--border-color);
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .input-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .text-input {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 18px;
+      color: white;
+      font-family: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .text-input:focus {
+      border-color: var(--accent);
+    }
+
+    .select-input {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 18px;
+      color: white;
+      font-family: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      min-width: 140px;
+    }
+
+    .submit-btn {
+      background: var(--accent);
+      border: none;
+      border-radius: 12px;
+      color: white;
+      padding: 14px 28px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .submit-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Reasoning Trace Visualizer */
+    .trace-container {
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .trace-header {
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .trace-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .trace-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Timeline step */
+    .timeline-step {
+      display: flex;
+      gap: 12px;
+      position: relative;
+    }
+
+    .timeline-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 10px;
+      top: 24px;
+      bottom: -16px;
+      width: 2px;
+      background: var(--border-color);
+    }
+
+    .step-marker {
+      width: 22px;
+      height: 22px;
+      border-radius: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    .step-marker.success {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1.5px solid var(--success);
+      color: var(--success);
+    }
+
+    .step-marker.failed {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1.5px solid var(--danger);
+      color: var(--danger);
+    }
+
+    .step-marker.skipped {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1.5px solid var(--warning);
+      color: var(--warning);
+    }
+
+    .step-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .step-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .step-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .step-reason {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .step-details {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .step-attempts {
+      font-size: 0.7rem;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+
+    /* Keyframe Animations */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Helper utility for collapsed state */
+    .collapsed {
+      display: none !important;
+    }
+
+    .chevron {
+      transition: transform 0.2s ease;
+    }
+
+    .chevron.rotated {
+      transform: rotate(180deg);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="app-container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h1>Agentic Capstone</h1>
+        <p>Interactive Agent Playground</p>
+      </div>
+
+      <!-- Mode Selector -->
+      <div class="mode-selector">
+        <span class="mode-label">Orchestration Mode</span>
+        <div class="mode-options">
+          <button id="mode-agent-btn" class="mode-btn active" onclick="switchMode('agent')">Direct Agent</button>
+          <button id="mode-chain-btn" class="mode-btn" onclick="switchMode('chain')">Reasoning Chain</button>
+        </div>
+      </div>
+
+      <!-- History List -->
+      <div class="history-list" id="history-container">
+        <span class="mode-label">Session Queries</span>
+        <!-- JS mounts history here -->
+      </div>
+    </div>
+
+    <!-- Chat Area -->
+    <div class="chat-area">
+      <div class="chat-messages" id="chat-messages-container">
+        <!-- Welcoming system message -->
+        <div class="message agent">
+          <div class="message-bubble">
+            Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
+            <br/><br/>
+            Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to let me decompose, evaluate, and repair a multi-step query automatically!
+          </div>
+          <div class="message-meta">Agent • System</div>
+        </div>
+      </div>
+
+      <!-- Chat input field form -->
+      <div class="chat-input-container">
+        <form class="input-form" onsubmit="handleFormSubmit(event)">
+          <div class="input-row" id="form-inputs-row">
+            <!-- Dynamically swaps inputs here depending on the selected mode -->
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentMode = 'agent';
+    const chatMessagesContainer = document.getElementById('chat-messages-container');
+    const historyContainer = document.getElementById('history-container');
+
+    // Switch between modes
+    function switchMode(mode) {
+      currentMode = mode;
+      document.getElementById('mode-agent-btn').classList.toggle('active', mode === 'agent');
+      document.getElementById('mode-chain-btn').classList.toggle('active', mode === 'chain');
+      renderFormInputs();
+    }
+
+    // Swaps input elements based on active mode
+    function renderFormInputs() {
+      const row = document.getElementById('form-inputs-row');
+      if (currentMode === 'agent') {
+        row.innerHTML = `
+          <select id="tool-select" class="select-input" onchange="updatePlaceholder()">
+            <option value="calculator">Calculator</option>
+            <option value="get_time">Time</option>
+            <option value="get_weather">Weather</option>
+          </select>
+          <input type="text" id="argument-input" class="text-input" placeholder="e.g. 5 * 25" required />
+          <button type="submit" class="submit-btn" id="send-btn">
+            Send
+          </button>
+        `;
+      } else {
+        row.innerHTML = `
+          <input type="text" id="goal-input" class="text-input" placeholder="e.g. Check the weather in Delhi and multiply the temp by 2" required />
+          <button type="submit" class="submit-btn" id="send-btn">
+            Analyze Goal
+          </button>
+        `;
+      }
+    }
+
+    // Dynamic placeholder guidance
+    function updatePlaceholder() {
+      const tool = document.getElementById('tool-select').value;
+      const input = document.getElementById('argument-input');
+      if (tool === 'calculator') {
+        input.placeholder = 'e.g. 5 * 25';
+        input.disabled = false;
+        input.required = true;
+      } else if (tool === 'get_time') {
+        input.placeholder = 'No arguments required';
+        input.disabled = true;
+        input.required = false;
+        input.value = '';
+      } else if (tool === 'get_weather') {
+        input.placeholder = 'e.g. Delhi';
+        input.disabled = false;
+        input.required = true;
+      }
+    }
+
+    // Append a message to the chat view
+    function appendMessage(sender, text, timestamp = new Date().toLocaleTimeString(), extraHtml = '') {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${sender}`;
+      messageDiv.innerHTML = `
+        <div class="message-bubble">${text}</div>
+        ${extraHtml}
+        <div class="message-meta">${sender === 'user' ? 'You' : 'Agent'} • ${timestamp}</div>
+      `;
+      chatMessagesContainer.appendChild(messageDiv);
+      chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }
+
+    // Adds queries to history listing
+    function appendHistoryItem(query) {
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.innerText = query;
+      item.onclick = () => {
+        if (currentMode === 'agent') {
+          const arg = document.getElementById('argument-input');
+          if (arg && !arg.disabled) arg.value = query;
+        } else {
+          const goal = document.getElementById('goal-input');
+          if (goal) goal.value = query;
+        }
+      };
+      historyContainer.appendChild(item);
+    }
+
+    // Form submission hook
+    async function handleFormSubmit(event) {
+      event.preventDefault();
+      const sendBtn = document.getElementById('send-btn');
+      sendBtn.disabled = true;
+      sendBtn.innerHTML = `<span class="spinner"></span> Working...`;
+
+      try {
+        if (currentMode === 'agent') {
+          const tool = document.getElementById('tool-select').value;
+          const argument = document.getElementById('argument-input').value;
+          
+          appendMessage('user', `Call <strong>${tool}</strong>${argument ? ` with argument: "${argument}"` : ''}`);
+          appendHistoryItem(argument || `get_time`);
+          
+          const response = await fetch('/agent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool, argument: argument || null })
+          });
+          
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || 'Request failed');
+          
+          appendMessage('agent', `Result: <strong>${data.result}</strong><br/><small style="color:var(--text-muted)">Latency: ${data.latency_ms}ms</small>`);
+        } else {
+          const goal = document.getElementById('goal-input').value;
+          
+          appendMessage('user', goal);
+          appendHistoryItem(goal);
+          
+          const response = await fetch(`/chain/run?goal=${encodeURIComponent(goal)}`, {
+            method: 'POST'
+          });
+          
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || 'Chain execution failed');
+          
+          // Generate the trace HTML representation
+          const traceId = `trace-${Date.now()}`;
+          const traceHtml = buildTraceHtml(data, traceId);
+          
+          appendMessage('agent', data.verify.final_summary, new Date().toLocaleTimeString(), traceHtml);
+        }
+      } catch (error) {
+        appendMessage('agent', `<span style="color:var(--danger)">Error: ${error.message}</span>`);
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = currentMode === 'agent' ? 'Send' : 'Analyze Goal';
+        
+        // Reset text inputs
+        const argInput = document.getElementById('argument-input');
+        if (argInput) argInput.value = '';
+        const goalInput = document.getElementById('goal-input');
+        if (goalInput) goalInput.value = '';
+      }
+    }
+
+    // Builds the visual step-by-step reasoning chain timeline trace
+    function buildTraceHtml(trace, traceId) {
+      let stepsHtml = '';
+      
+      trace.results.forEach((step) => {
+        const isSuccess = step.success;
+        const markerClass = isSuccess ? 'success' : 'failed';
+        const markerContent = isSuccess ? '✓' : '✗';
+        
+        stepsHtml += `
+          <div class="timeline-step">
+            <div class="step-marker ${markerClass}">${markerContent}</div>
+            <div class="step-content">
+              <div class="step-header-row">
+                <span class="step-name">${step.tool}</span>
+                <span class="step-attempts">Attempt ${step.attempt}</span>
+              </div>
+              <div class="step-details">
+                <div><strong>Input:</strong> ${JSON.stringify(step.tool_input)}</div>
+                ${step.output ? `<div><strong>Output:</strong> ${step.output}</div>` : ''}
+                ${step.error ? `<div style="color:var(--danger)"><strong>Error:</strong> ${step.error}</div>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      return `
+        <div class="trace-container">
+          <div class="trace-header" onclick="toggleTrace('${traceId}')">
+            <div class="trace-title">
+              <svg class="chevron" id="${traceId}-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              <span>Execution Trace (${trace.results.length} steps)</span>
+            </div>
+            <span style="font-size: 0.7rem; color: var(--text-muted)">ID: ${trace.request_id.slice(0, 8)}...</span>
+          </div>
+          <div class="trace-body collapsed" id="${traceId}-body">
+            ${stepsHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    // Toggle tracing detail dropdown collapse
+    function toggleTrace(traceId) {
+      const body = document.getElementById(`${traceId}-body`);
+      const chevron = document.getElementById(`${traceId}-chevron`);
+      body.classList.toggle('collapsed');
+      chevron.classList.toggle('rotated');
+    }
+
+    // Startup bootstrap rendering
+    switchMode('agent');
+  </script>
+</body>
+</html>

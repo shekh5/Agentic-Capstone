@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from reasoning_chain.router import router as chain_router
@@ -88,6 +89,18 @@ def root():
 @app.get("/version")
 def version():
     return {"version": APP_VERSION}
+
+
+@app.get("/chat", response_class=HTMLResponse)
+def chat_ui():
+    """Serves the interactive Agent chat interface."""
+    static_file_path = os.path.join(os.path.dirname(__file__), "static", "chat.html")
+    try:
+        with open(static_file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Chat UI source file not found")
 
 
 @app.post("/agent", response_model=AgentResponse)

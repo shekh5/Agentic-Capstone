@@ -26,6 +26,13 @@ def test_version():
     assert r.json() == {"version": "1.0.0"}
 
 
+def test_chat_ui():
+    r = client.get("/chat")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "Agentic Capstone" in r.text
+
+
 def test_agent_calculator():
     r = client.post("/agent", json={"tool": "calculator", "argument": "2 + 2"})
     assert r.status_code == 200
