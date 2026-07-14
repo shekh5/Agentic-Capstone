@@ -17,6 +17,7 @@ WORKDIR /app
 # Copy only installed packages from builder stage, not build tools
 COPY --from=builder /root/.local /home/appuser/.local
 COPY app ./app
+COPY reasoning_chain ./reasoning_chain
 
 ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
