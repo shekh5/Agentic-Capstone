@@ -91,29 +91,6 @@ def version():
     return {"version": APP_VERSION}
 
 
-@app.get("/list-models")
-def list_models_route():
-    try:
-        from google import genai
-        client = genai.Client()
-        models = [m.name for m in client.models.list()]
-        
-        candidates = ["gemini-2.0-flash-lite", "gemini-3.1-flash-lite", "gemini-2.0-flash"]
-        test_results = {}
-        for cand in candidates:
-            try:
-                resp = client.models.generate_content(
-                    model=cand,
-                    contents="respond with ok"
-                )
-                test_results[cand] = f"SUCCESS: {resp.text.strip()}"
-            except Exception as ex:
-                test_results[cand] = f"FAILED: {str(ex)}"
-                
-        return {"models": models, "tests": test_results}
-    except Exception as e:
-        return {"error": str(e)}
-
 
 @app.get("/chat", response_class=HTMLResponse)
 def chat_ui():
