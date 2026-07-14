@@ -20,27 +20,30 @@ import uuid
 from .schemas import ChainTrace, Plan, StepResult, VerifyResult
 from .tools import TOOL_REGISTRY, ToolError
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 MAX_STEPS = 6
 MAX_REPAIR_ROUNDS = 1
 MAX_TOOL_RETRIES = 1
 
 try:
-    from anthropic import Anthropic
-except Exception:  # pragma: no cover - exercised only when dependency is absent
-    Anthropic = None  # type: ignore[assignment]
+    from google import genai
+    from google.genai import types
+except Exception:  # pragma: no cover
+    genai = None  # type: ignore
+    types = None  # type: ignore
 
 _client = None
 
 
 def _get_client():
+    global _client
     if _client is None:
-        if Anthropic is None:
+        if genai is None:
             raise RuntimeError(
-                "anthropic is not installed; install dependencies or patch decompose_goal/verify_and_repair "
+                "google-genai is not installed; install dependencies or patch decompose_goal/verify_and_repair "
                 "in tests"
             )
-        return Anthropic()
+        return genai.Client()
     return _client
 
 
@@ -72,13 +75,15 @@ def decompose_goal(goal: str) -> Plan:
         '{"goal": str, "steps": [{"step_id": int, "tool": str, '
         '"tool_input": object, "reason": str}]}'
     )
-    resp = _get_client().messages.create(
+    resp = _get_client().models.generate_content(
         model=MODEL,
-        max_tokens=1000,
-        system=system,
-        messages=[{"role": "user", "content": goal}],
+        contents=goal,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=1000,
+        ),
     )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
+    raw = resp.text
     data = _extract_json(raw)
     return Plan.model_validate(data)
 
@@ -158,13 +163,15 @@ def verify_and_repair(goal: str, plan: Plan, results: list[StepResult]) -> Verif
         "goal": goal,
         "results": [r.model_dump() for r in results],
     }
-    resp = _get_client().messages.create(
+    resp = _get_client().models.generate_content(
         model=MODEL,
-        max_tokens=1000,
-        system=system,
-        messages=[{"role": "user", "content": json.dumps(payload)}],
+        contents=json.dumps(payload),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=1000,
+        ),
     )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
+    raw = resp.text
     data = _extract_json(raw)
     return VerifyResult.model_validate(data)
 
