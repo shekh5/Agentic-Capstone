@@ -20,7 +20,7 @@ import uuid
 from .schemas import ChainTrace, Plan, StepResult, VerifyResult
 from .tools import TOOL_REGISTRY, ToolError
 
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 MAX_STEPS = 6
 MAX_REPAIR_ROUNDS = 1
 MAX_TOOL_RETRIES = 1
