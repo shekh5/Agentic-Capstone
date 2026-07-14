@@ -91,6 +91,17 @@ def version():
     return {"version": APP_VERSION}
 
 
+@app.get("/list-models")
+def list_models_route():
+    try:
+        from google import genai
+        client = genai.Client()
+        models = [m.name for m in client.models.list()]
+        return {"models": models}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/chat", response_class=HTMLResponse)
 def chat_ui():
     """Serves the interactive Agent chat interface."""
