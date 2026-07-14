@@ -31,7 +31,12 @@ def test_execute_plan_all_succeed():
 def test_execute_plan_retries_then_succeeds():
     plan = Plan(
         goal="weather in Paris",
-        steps=[PlanStep(step_id=1, tool="weather", tool_input={"city": "Paris"}, reason="check weather")],
+        steps=[
+            PlanStep(
+                step_id=1, tool="weather",
+                tool_input={"city": "Paris"}, reason="check weather",
+            ),
+        ],
     )
     # Fail once, then succeed -- exercises the retry path without depending
     # on the real random failure rate.
