@@ -43,7 +43,7 @@ def _get_client():
                 "google-genai is not installed; install dependencies or patch decompose_goal/verify_and_repair "
                 "in tests"
             )
-        return genai.Client()
+        _client = genai.Client()
     return _client
 
 
