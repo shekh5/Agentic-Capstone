@@ -89,12 +89,25 @@ jobs:
       - name: Health check
         id: health
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.APP_HEALTH_URL }}" || echo "000")
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed with status $STATUS"
+          URL="${{ secrets.APP_HEALTH_URL }}"
+          if [ -z "$URL" ]; then
+            echo "::error::APP_HEALTH_URL secret is not set"
             exit 1
           fi
+          echo "Health check URL: ${URL}"
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i/5..."
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null) || STATUS="000"
+            echo "  Status: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "  Not ready yet, waiting 10s..."
+            sleep 10
+          done
+          echo "::error::Health check failed after 5 attempts (last status: $STATUS)"
+          exit 1
 
       - name: Rollback on failed health check
         if: failure()
@@ -105,7 +118,9 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd ~/agentic-capstone
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            export GITHUB_REPOSITORY=${{ needs.build-and-push.outputs.image_name }}
             echo "Rolling back to previous stable image..."
-            docker pull ghcr.io/${{ needs.build-and-push.outputs.image_name }}:previous-stable
-            docker tag ghcr.io/${{ needs.build-and-push.outputs.image_name }}:previous-stable ghcr.io/${{ needs.build-and-push.outputs.image_name }}:latest
+            docker pull ghcr.io/${GITHUB_REPOSITORY}:previous-stable
+            docker tag ghcr.io/${GITHUB_REPOSITORY}:previous-stable ghcr.io/${GITHUB_REPOSITORY}:latest
             docker compose -f docker-compose.prod.yml up -d
