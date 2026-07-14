@@ -88,26 +88,25 @@ jobs:
 
       - name: Health check
         id: health
-        run: |
-          URL="${{ secrets.APP_HEALTH_URL }}"
-          if [ -z "$URL" ]; then
-            echo "::error::APP_HEALTH_URL secret is not set"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            for i in 1 2 3 4 5; do
+              echo "Attempt $i/5..."
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://localhost:8000/health 2>/dev/null) || STATUS="000"
+              echo "  Status: $STATUS"
+              if [ "$STATUS" = "200" ]; then
+                echo "Health check passed!"
+                exit 0
+              fi
+              echo "  Not ready yet, waiting 10s..."
+              sleep 10
+            done
+            echo "Health check failed after 5 attempts (last status: $STATUS)"
             exit 1
-          fi
-          echo "Health check URL: ${URL}"
-          for i in 1 2 3 4 5; do
-            echo "Attempt $i/5..."
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null) || STATUS="000"
-            echo "  Status: $STATUS"
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed!"
-              exit 0
-            fi
-            echo "  Not ready yet, waiting 10s..."
-            sleep 10
-          done
-          echo "::error::Health check failed after 5 attempts (last status: $STATUS)"
-          exit 1
 
       - name: Rollback on failed health check
         if: failure()
