@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from reasoning_chain.chain import execute_plan, run_chain
-from reasoning_chain.schemas import Plan, PlanStep, VerifyResult
+from reasoning_chain.schemas import Plan, PlanStep, StepResult, VerifyResult
 
 
 def test_execute_plan_all_succeed():
@@ -118,6 +118,42 @@ def test_run_chain_stops_immediately_when_satisfied():
 
     assert trace.repair_rounds == 0
     assert trace.verify.satisfied is True
+
+
+def test_execute_plan_resolves_step_references():
+    from reasoning_chain.chain import _resolve_references
+    from reasoning_chain.schemas import ToolName
+
+    history = [
+        StepResult(
+            step_id=1,
+            tool=ToolName.weather,
+            tool_input={"city": "London"},
+            output="London: Partly cloudy, 22.4°C",
+            success=True,
+            attempt=1,
+            latency_ms=10.0,
+            api_calls=[]
+        ),
+        StepResult(
+            step_id=2,
+            tool=ToolName.weather,
+            tool_input={"city": "Jaipur"},
+            output="Jaipur: Mist, 34.0°C",
+            success=True,
+            attempt=1,
+            latency_ms=10.0,
+            api_calls=[]
+        )
+    ]
+
+    inp = {"expression": "[1] * 3"}
+    res = _resolve_references(inp, history)
+    assert res["expression"] == "22.4 * 3"
+
+    inp2 = {"expression": "([1] + [2]) - 10"}
+    res2 = _resolve_references(inp2, history)
+    assert res2["expression"] == "(22.4 + 34.0) - 10"
 
 
 if __name__ == "__main__":

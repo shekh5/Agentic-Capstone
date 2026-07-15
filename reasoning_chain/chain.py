@@ -15,6 +15,7 @@ request_id so a failed run can be replayed/debugged like a CI run.
 
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -73,6 +74,7 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
         "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
         "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
         "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
+        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. Do not write text variable names like London_temp.\n"
         f"Use at most {MAX_STEPS} steps. "
         "Respond with ONLY a JSON object matching this shape, no prose, "
         "no markdown fences: "
@@ -101,6 +103,30 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
     return Plan.model_validate(data)
 
 
+def _resolve_references(tool_input: dict, results_history: list[StepResult]) -> dict:
+    """
+    Scans values in tool_input for step reference patterns like [id] (e.g. '[1]') 
+    and replaces them with the parsed numeric output of that step from results_history.
+    """
+    resolved = {}
+    for k, v in tool_input.items():
+        if isinstance(v, str):
+            def replacer(match):
+                ref_id = int(match.group(1))
+                for res in results_history:
+                    if res.step_id == ref_id and res.success and res.output:
+                        # Extract all numbers from the target step output
+                        nums = re.findall(r"[-+]?\d*\.\d+|\d+", res.output)
+                        if nums:
+                            return nums[-1]  # Take the last parsed number
+                return match.group(0)
+            
+            resolved[k] = re.sub(r"\[(\d+)\]", replacer, v)
+        else:
+            resolved[k] = v
+    return resolved
+
+
 def execute_plan(plan: Plan) -> list[StepResult]:
     """Stage 2: run each step against real tools with retry + circuit
     breaker. A tool that fails twice in a row gets skipped for the rest
@@ -121,6 +147,7 @@ def execute_plan(plan: Plan) -> list[StepResult]:
             )
             continue
 
+        resolved_input = _resolve_references(step.tool_input, results)
         fn = TOOL_REGISTRY[step.tool]
         last_error = None
         last_api_calls = []
@@ -129,7 +156,7 @@ def execute_plan(plan: Plan) -> list[StepResult]:
         for attempt in range(1, MAX_TOOL_RETRIES + 2):
             step_start = time.perf_counter()
             try:
-                res = fn(**step.tool_input)
+                res = fn(**resolved_input)
                 step_latency = (time.perf_counter() - step_start) * 1000
                 if isinstance(res, tuple):
                     output, api_calls = res
@@ -140,7 +167,7 @@ def execute_plan(plan: Plan) -> list[StepResult]:
                     StepResult(
                         step_id=step.step_id,
                         tool=step.tool,
-                        tool_input=step.tool_input,
+                        tool_input=resolved_input,
                         output=output,
                         success=True,
                         attempt=attempt,
@@ -163,7 +190,7 @@ def execute_plan(plan: Plan) -> list[StepResult]:
                 StepResult(
                     step_id=step.step_id,
                     tool=step.tool,
-                    tool_input=step.tool_input,
+                    tool_input=resolved_input,
                     success=False,
                     error=last_error,
                     attempt=MAX_TOOL_RETRIES + 1,
@@ -190,6 +217,7 @@ def verify_and_repair(
         "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
         "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
         "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
+        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. Do not write text variable names like London_temp.\n"
         "If a repair isn't possible, say so "
         "plainly in final_summary instead of guessing. "
         "Respond with ONLY JSON: {\"satisfied\": bool, \"missing\": "
