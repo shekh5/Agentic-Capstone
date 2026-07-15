@@ -20,7 +20,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from .schemas import ChainTrace, Plan, StepResult, VerifyResult, ModelCall
+from .schemas import ChainTrace, Plan, PlanStep, StepResult, VerifyResult, ModelCall
 from .tools import TOOL_REGISTRY, ToolError
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -251,23 +251,113 @@ def verify_and_repair(
 
 
 def run_chain(goal: str) -> ChainTrace:
-    """The full orchestrator. This is the function your FastAPI route calls."""
+    """The full orchestrator using a step-by-step ReAct loop."""
     start_time = datetime.now(timezone.utc).isoformat()
     chain_start = time.perf_counter()
     request_id = str(uuid.uuid4())
     model_calls = []
+    results = []
+    plan_steps = []
+    
+    satisfied = False
+    final_summary = ""
+    step_count = 0
+    max_steps = 8
 
-    plan = decompose_goal(goal, model_calls)
-    results = execute_plan(plan)
-    verify = verify_and_repair(goal, plan, results, model_calls)
+    system = (
+        "You are an agent solving a goal step-by-step. "
+        "Available tools:\n"
+        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
+        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
+        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
+        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), "
+        "represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. "
+        "Do not write text variable names like London_temp.\n\n"
+        "At each step, look at the history of tools executed so far and choose the NEXT action. "
+        "Your response MUST be a JSON object containing either:\n"
+        "1. A tool action to perform next:\n"
+        "   {\"thought\": \"explain why this step is needed\", \"tool\": \"weather|calculator|get_time\", \"tool_input\": dict}\n"
+        "2. Or, if the goal is fully achieved, provide the final answer:\n"
+        "   {\"satisfied\": true, \"final_summary\": \"explain the final answer here\"}\n"
+        "Respond with ONLY the JSON object, no prose, no markdown formatting."
+    )
 
-    repair_rounds = 0
-    while not verify.satisfied and verify.repair_steps and repair_rounds < MAX_REPAIR_ROUNDS:
-        repair_plan = Plan(goal=goal, steps=verify.repair_steps)
-        repair_results = execute_plan(repair_plan)
-        results = results + repair_results
-        verify = verify_and_repair(goal, plan, results, model_calls)
-        repair_rounds += 1
+    while step_count < max_steps:
+        # Build history payload for this step
+        history_payload = {
+            "goal": goal,
+            "steps_taken": [
+                {
+                    "step_id": r.step_id,
+                    "tool": r.tool,
+                    "tool_input": r.tool_input,
+                    "output": r.output,
+                    "success": r.success,
+                    "error": r.error
+                }
+                for r in results
+            ]
+        }
+        
+        resp = _get_client().models.generate_content(
+            model=MODEL,
+            contents=json.dumps(history_payload),
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=1000,
+            ),
+        )
+        raw = resp.text
+        
+        model_calls.append(
+            ModelCall(
+                stage=f"step_{step_count + 1}",
+                system_prompt=system,
+                user_prompt=json.dumps(history_payload),
+                raw_response=raw,
+            )
+        )
+        
+        data = _extract_json(raw)
+        
+        # Check if the model has finished
+        if data.get("satisfied") is True:
+            satisfied = True
+            final_summary = data.get("final_summary", "Goal satisfied.")
+            break
+            
+        # Otherwise, parse the next step proposal
+        tool = data.get("tool")
+        tool_input = data.get("tool_input", {})
+        thought = data.get("thought", "")
+        
+        if not tool:
+            satisfied = False
+            final_summary = "Agent failed to propose a tool action."
+            break
+            
+        step_id = step_count + 1
+        
+        plan_step = PlanStep(
+            step_id=step_id,
+            tool=tool,
+            tool_input=tool_input,
+            reason=thought
+        )
+        plan_steps.append(plan_step)
+        
+        # Execute this single step using execute_plan
+        single_plan = Plan(goal=goal, steps=[plan_step])
+        step_results = execute_plan(single_plan)
+        
+        if step_results:
+            # Re-map result to step history (retaining execution outputs)
+            results.append(step_results[0])
+            
+        step_count += 1
+    else:
+        satisfied = False
+        final_summary = f"Stopped after reaching maximum of {max_steps} steps."
 
     total_latency_ms = (time.perf_counter() - chain_start) * 1000
     end_time = datetime.now(timezone.utc).isoformat()
@@ -275,10 +365,15 @@ def run_chain(goal: str) -> ChainTrace:
     return ChainTrace(
         request_id=request_id,
         goal=goal,
-        plan=plan,
+        plan=Plan(goal=goal, steps=plan_steps),
         results=results,
-        verify=verify,
-        repair_rounds=repair_rounds,
+        verify=VerifyResult(
+            satisfied=satisfied,
+            missing=[] if satisfied else ["Goal not fully met or stopped prematurely"],
+            repair_steps=[],
+            final_summary=final_summary
+        ),
+        repair_rounds=0,
         start_time=start_time,
         end_time=end_time,
         total_latency_ms=round(total_latency_ms, 2),

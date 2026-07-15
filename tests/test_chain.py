@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from reasoning_chain.chain import execute_plan, run_chain
-from reasoning_chain.schemas import Plan, PlanStep, StepResult, VerifyResult
+from reasoning_chain.schemas import Plan, PlanStep, StepResult
 
 
 def test_execute_plan_all_succeed():
@@ -81,43 +81,33 @@ def test_execute_plan_circuit_breaker_disables_repeated_failures():
 
 
 def test_run_chain_stops_after_max_repair_rounds():
-    """Even if the model keeps saying 'not satisfied', the loop must
-    terminate -- this is the test that would catch an infinite-loop bug
-    before it reaches production."""
-    fake_plan = Plan(
-        goal="impossible goal",
-        steps=[PlanStep(step_id=1, tool="get_time", tool_input={}, reason="r")],
-    )
-    never_satisfied = VerifyResult(
-        satisfied=False,
-        missing=["something"],
-        repair_steps=[PlanStep(step_id=99, tool="get_time", tool_input={}, reason="retry")],
-        final_summary="still missing data",
-    )
-
-    with patch("reasoning_chain.chain.decompose_goal", return_value=fake_plan), patch(
-        "reasoning_chain.chain.verify_and_repair", return_value=never_satisfied
-    ):
-        trace = run_chain("impossible goal")
-
-    assert trace.repair_rounds == 1  # MAX_REPAIR_ROUNDS, not infinite
+    """Test that the ReAct loop terminates after reaching the maximum step limit."""
+    from unittest.mock import MagicMock
+    mock_resp = MagicMock()
+    mock_resp.text = '{"thought": "still working", "tool": "get_time", "tool_input": {}}'
+    
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.return_value = mock_resp
+        trace = run_chain("never ending goal")
+        
+    assert len(trace.results) == 8
     assert trace.verify.satisfied is False
+    assert "Stopped after reaching maximum" in trace.verify.final_summary
 
 
 def test_run_chain_stops_immediately_when_satisfied():
-    fake_plan = Plan(
-        goal="what time is it",
-        steps=[PlanStep(step_id=1, tool="get_time", tool_input={}, reason="r")],
-    )
-    satisfied = VerifyResult(satisfied=True, final_summary="done")
-
-    with patch("reasoning_chain.chain.decompose_goal", return_value=fake_plan), patch(
-        "reasoning_chain.chain.verify_and_repair", return_value=satisfied
-    ):
-        trace = run_chain("what time is it")
-
-    assert trace.repair_rounds == 0
+    """Test that the ReAct loop terminates immediately when satisfied = True."""
+    from unittest.mock import MagicMock
+    mock_resp = MagicMock()
+    mock_resp.text = '{"satisfied": true, "final_summary": "Finished goal."}'
+    
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.return_value = mock_resp
+        trace = run_chain("simple goal")
+        
+    assert len(trace.results) == 0
     assert trace.verify.satisfied is True
+    assert trace.verify.final_summary == "Finished goal."
 
 
 def test_execute_plan_resolves_step_references():
