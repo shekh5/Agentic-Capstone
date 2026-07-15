@@ -122,6 +122,18 @@ def chat_ui():
         raise HTTPException(status_code=404, detail="Chat UI source file not found")
 
 
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_ui():
+    """Serves the interactive Agent observability dashboard."""
+    static_file_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
+    try:
+        with open(static_file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Dashboard source file not found")
+
+
 @app.post("/agent", response_model=AgentResponse)
 def run_agent(req: AgentRequest):
     if req.tool not in TOOLS:

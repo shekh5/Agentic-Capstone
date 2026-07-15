@@ -15,9 +15,11 @@ request_id so a failed run can be replayed/debugged like a CI run.
 
 import json
 import os
+import time
 import uuid
+from datetime import datetime, timezone
 
-from .schemas import ChainTrace, Plan, StepResult, VerifyResult
+from .schemas import ChainTrace, Plan, StepResult, VerifyResult, ModelCall
 from .tools import TOOL_REGISTRY, ToolError
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -62,7 +64,7 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
-def decompose_goal(goal: str) -> Plan:
+def decompose_goal(goal: str, model_calls: list = None) -> Plan:
     """Stage 1: ask the model to break the goal into tool calls, returned
     as structured JSON only -- not prose."""
     system = (
@@ -86,6 +88,15 @@ def decompose_goal(goal: str) -> Plan:
         ),
     )
     raw = resp.text
+    if model_calls is not None:
+        model_calls.append(
+            ModelCall(
+                stage="decompose",
+                system_prompt=system,
+                user_prompt=goal,
+                raw_response=raw,
+            )
+        )
     data = _extract_json(raw)
     return Plan.model_validate(data)
 
@@ -112,9 +123,19 @@ def execute_plan(plan: Plan) -> list[StepResult]:
 
         fn = TOOL_REGISTRY[step.tool]
         last_error = None
+        last_api_calls = []
+        step_latency = 0.0
+
         for attempt in range(1, MAX_TOOL_RETRIES + 2):
+            step_start = time.perf_counter()
             try:
-                output = fn(**step.tool_input)
+                res = fn(**step.tool_input)
+                step_latency = (time.perf_counter() - step_start) * 1000
+                if isinstance(res, tuple):
+                    output, api_calls = res
+                else:
+                    output, api_calls = res, []
+
                 results.append(
                     StepResult(
                         step_id=step.step_id,
@@ -123,13 +144,19 @@ def execute_plan(plan: Plan) -> list[StepResult]:
                         output=output,
                         success=True,
                         attempt=attempt,
+                        latency_ms=round(step_latency, 2),
+                        api_calls=api_calls,
                     )
                 )
                 break
             except ToolError as e:
+                step_latency = (time.perf_counter() - step_start) * 1000
                 last_error = str(e)
+                last_api_calls = getattr(e, "api_calls", [])
             except TypeError as e:
+                step_latency = (time.perf_counter() - step_start) * 1000
                 last_error = f"bad tool_input: {e}"
+                last_api_calls = []
                 break
         else:
             results.append(
@@ -140,6 +167,8 @@ def execute_plan(plan: Plan) -> list[StepResult]:
                     success=False,
                     error=last_error,
                     attempt=MAX_TOOL_RETRIES + 1,
+                    latency_ms=round(step_latency, 2),
+                    api_calls=last_api_calls,
                 )
             )
             disabled_tools.add(step.tool)
@@ -147,7 +176,9 @@ def execute_plan(plan: Plan) -> list[StepResult]:
     return results
 
 
-def verify_and_repair(goal: str, plan: Plan, results: list[StepResult]) -> VerifyResult:
+def verify_and_repair(
+    goal: str, plan: Plan, results: list[StepResult], model_calls: list = None
+) -> VerifyResult:
     """Stage 3: ask the model to check tool outputs against the goal. It
     can either declare victory, ask for a small number of repair steps,
     or -- critically -- admit what it couldn't determine rather than
@@ -178,24 +209,40 @@ def verify_and_repair(goal: str, plan: Plan, results: list[StepResult]) -> Verif
         ),
     )
     raw = resp.text
+    if model_calls is not None:
+        model_calls.append(
+            ModelCall(
+                stage="verify",
+                system_prompt=system,
+                user_prompt=json.dumps(payload),
+                raw_response=raw,
+            )
+        )
     data = _extract_json(raw)
     return VerifyResult.model_validate(data)
 
 
 def run_chain(goal: str) -> ChainTrace:
     """The full orchestrator. This is the function your FastAPI route calls."""
+    start_time = datetime.now(timezone.utc).isoformat()
+    chain_start = time.perf_counter()
     request_id = str(uuid.uuid4())
-    plan = decompose_goal(goal)
+    model_calls = []
+
+    plan = decompose_goal(goal, model_calls)
     results = execute_plan(plan)
-    verify = verify_and_repair(goal, plan, results)
+    verify = verify_and_repair(goal, plan, results, model_calls)
 
     repair_rounds = 0
     while not verify.satisfied and verify.repair_steps and repair_rounds < MAX_REPAIR_ROUNDS:
         repair_plan = Plan(goal=goal, steps=verify.repair_steps)
         repair_results = execute_plan(repair_plan)
         results = results + repair_results
-        verify = verify_and_repair(goal, plan, results)
+        verify = verify_and_repair(goal, plan, results, model_calls)
         repair_rounds += 1
+
+    total_latency_ms = (time.perf_counter() - chain_start) * 1000
+    end_time = datetime.now(timezone.utc).isoformat()
 
     return ChainTrace(
         request_id=request_id,
@@ -204,4 +251,8 @@ def run_chain(goal: str) -> ChainTrace:
         results=results,
         verify=verify,
         repair_rounds=repair_rounds,
+        start_time=start_time,
+        end_time=end_time,
+        total_latency_ms=round(total_latency_ms, 2),
+        llm_calls=model_calls,
     )

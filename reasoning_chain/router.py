@@ -39,7 +39,12 @@ def _log_trace(trace: ChainTrace) -> None:
     if _redis is None:
         return
     try:
+        # Save trace content
         _redis.set(f"chain_trace:{trace.request_id}", trace.model_dump_json(), ex=60 * 60 * 24)
+        # Add request_id to traces list for history visualization
+        _redis.lpush("chain_traces_list", trace.request_id)
+        # Keep only the last 100 trace IDs
+        _redis.ltrim("chain_traces_list", 0, 99)
     except Exception as e:
         logger.warning(f"failed to persist trace {trace.request_id}: {e}")
 
@@ -74,3 +79,32 @@ def get_trace(request_id: str):
     if raw is None:
         raise HTTPException(status_code=404, detail="trace not found")
     return json.loads(raw)
+
+
+@router.get("/traces")
+def list_traces(limit: int = 20):
+    """Retrieves metadata of the most recent traces recorded in Redis."""
+    if _redis is None:
+        return []
+    try:
+        # Retrieve recent request IDs
+        ids = _redis.lrange("chain_traces_list", 0, limit - 1)
+        traces = []
+        for request_id in ids:
+            raw = _redis.get(f"chain_trace:{request_id}")
+            if raw:
+                trace_data = json.loads(raw)
+                # Keep payload light: return metadata summaries
+                traces.append({
+                    "request_id": trace_data.get("request_id"),
+                    "goal": trace_data.get("goal"),
+                    "start_time": trace_data.get("start_time"),
+                    "total_latency_ms": trace_data.get("total_latency_ms"),
+                    "satisfied": trace_data.get("verify", {}).get("satisfied", False),
+                    "repair_rounds": trace_data.get("repair_rounds"),
+                    "step_count": len(trace_data.get("results", [])),
+                })
+        return traces
+    except Exception as e:
+        logger.warning(f"failed to list traces: {e}")
+        return []

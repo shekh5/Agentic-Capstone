@@ -34,6 +34,13 @@ class Plan(BaseModel):
     steps: list[PlanStep]
 
 
+class ModelCall(BaseModel):
+    stage: str
+    system_prompt: str
+    user_prompt: str
+    raw_response: str
+
+
 class StepResult(BaseModel):
     step_id: int
     tool: ToolName
@@ -42,6 +49,8 @@ class StepResult(BaseModel):
     success: bool
     error: Optional[str] = None
     attempt: int = 1
+    latency_ms: float = 0.0
+    api_calls: list[dict] = Field(default_factory=list)
 
 
 class VerifyResult(BaseModel):
@@ -61,3 +70,7 @@ class ChainTrace(BaseModel):
     results: list[StepResult]
     verify: VerifyResult
     repair_rounds: int
+    start_time: str = ""
+    end_time: str = ""
+    total_latency_ms: float = 0.0
+    llm_calls: list[ModelCall] = Field(default_factory=list)

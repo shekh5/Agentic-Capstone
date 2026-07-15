@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic Capstone - Observability Dashboard</title>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #090d16 0%, #111827 100%);
+      --card-bg: rgba(17, 24, 39, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --panel-bg: rgba(17, 24, 39, 0.9);
+      --highlight: rgba(99, 102, 241, 0.1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    /* Layout structure */
+    header {
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto 24px auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 10px;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #818cf8, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .refresh-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      color: var(--text-main);
+      padding: 10px 18px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .refresh-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .main-grid {
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+
+    @media (min-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1.5fr 1fr;
+      }
+    }
+
+    /* Metrics Grid */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .metric-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .metric-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .metric-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .metric-value.success-text {
+      color: var(--success);
+    }
+
+    /* Logs & Tables Section */
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      height: 70vh;
+      overflow: hidden;
+    }
+
+    .card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      gap: 16px;
+    }
+
+    .search-input {
+      flex: 1;
+      max-width: 320px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 8px 14px;
+      color: white;
+      font-family: inherit;
+      font-size: 0.85rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+    }
+
+    .table-container {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-muted);
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    tr.clickable-row {
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    tr.clickable-row:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    tr.active-row {
+      background: var(--highlight) !important;
+      border-left: 3px solid var(--accent);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 50px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    .badge.success {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+
+    .badge.failed {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+    }
+
+    /* Inspector Side Panel */
+    .inspector-panel {
+      display: flex;
+      flex-direction: column;
+      height: 70vh;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      margin-bottom: 16px;
+    }
+
+    .panel-header h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .panel-header p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .tab-row {
+      display: flex;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 16px;
+      gap: 16px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 4px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      position: relative;
+      outline: none;
+    }
+
+    .tab-btn.active {
+      color: var(--text-main);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .tab-content-container {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tab-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Code block blocks formatting */
+    pre {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.75rem;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .sub-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .log-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.01);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      padding: 14px;
+      border-radius: 12px;
+    }
+
+    /* Step timeline nodes */
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .timeline-node {
+      display: flex;
+      gap: 12px;
+      position: relative;
+    }
+
+    .timeline-node:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 11px;
+      top: 24px;
+      bottom: -16px;
+      width: 2px;
+      background: var(--border-color);
+    }
+
+    .node-marker {
+      width: 24px;
+      height: 24px;
+      border-radius: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      z-index: 1;
+    }
+
+    .node-marker.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 2px solid var(--success);
+      color: var(--success);
+    }
+
+    .node-marker.failed {
+      background: rgba(239, 68, 68, 0.1);
+      border: 2px solid var(--danger);
+      color: var(--danger);
+    }
+
+    .node-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .node-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .node-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .node-latency {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .node-meta {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .api-call-box {
+      margin-top: 10px;
+      background: rgba(99, 102, 241, 0.05);
+      border: 1px dashed rgba(99, 102, 241, 0.2);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .api-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .loading-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite;
+      margin-right: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>Agent Observability Dashboard</h1>
+      <p>Analyze execution paths, model call prompts, and tool API performance log history</p>
+    </div>
+    <button class="refresh-btn" onclick="fetchRecentTraces()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+      Refresh
+    </button>
+  </header>
+
+  <div class="main-grid">
+    <!-- Left Column: Traces list -->
+    <div>
+      <!-- High level stats -->
+      <div class="metrics-row">
+        <div class="metric-card">
+          <span class="metric-label">Total runs</span>
+          <span class="metric-value" id="stat-runs">0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Success Rate</span>
+          <span class="metric-value success-text" id="stat-success">0%</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Avg Latency</span>
+          <span class="metric-value" id="stat-latency">0ms</span>
+        </div>
+      </div>
+
+      <!-- Traces list card -->
+      <div class="card">
+        <div class="card-header-row">
+          <h2 style="font-size: 1.1rem; font-weight: 700;">Trace History</h2>
+          <input type="text" class="search-input" id="search-bar" placeholder="Filter goals..." oninput="filterTraces()" />
+        </div>
+        
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Goal</th>
+                <th>Status</th>
+                <th>Steps</th>
+                <th>Latency</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="traces-table-body">
+              <!-- JS populates traces list here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Detail Inspector -->
+    <div class="card inspector-panel">
+      <div class="panel-header" id="inspector-header-container">
+        <h2>Trace Inspector</h2>
+        <p>Select a trace row on the left to examine details</p>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tab-row">
+        <button class="tab-btn active" id="tab-timeline-btn" onclick="switchTab('timeline')">Execution Path</button>
+        <button class="tab-btn" id="tab-llm-btn" onclick="switchTab('llm')">Gemini Prompts</button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="tab-content-container" id="inspector-content-container">
+        <div class="loading-container">
+          <span>Select an execution trace to inspect payloads</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let recentTraces = [];
+    let selectedTrace = null;
+    let activeTab = 'timeline';
+
+    // Startup bootstrap rendering
+    document.addEventListener("DOMContentLoaded", () => {
+      fetchRecentTraces();
+    });
+
+    // Fetch traces list metadata
+    async function fetchRecentTraces() {
+      const tbody = document.getElementById('traces-table-body');
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 40px;"><div class="spinner" style="display:inline-block; vertical-align:middle;"></div> Loading traces...</td></tr>`;
+
+      try {
+        const response = await fetch('/chain/traces');
+        if (!response.ok) throw new Error("Could not retrieve traces");
+        recentTraces = await response.json();
+        renderTracesTable();
+        calculateMetrics();
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding: 40px;">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Calculates and displays the high level metrics
+    function calculateMetrics() {
+      const total = recentTraces.length;
+      document.getElementById('stat-runs').innerText = total;
+
+      if (total === 0) {
+        document.getElementById('stat-success').innerText = '0%';
+        document.getElementById('stat-latency').innerText = '0ms';
+        return;
+      }
+
+      const satisfiedCount = recentTraces.filter(t => t.satisfied).length;
+      const successRate = Math.round((satisfiedCount / total) * 100);
+      document.getElementById('stat-success').innerText = `${successRate}%`;
+
+      const sumLatency = recentTraces.reduce((acc, t) => acc + (t.total_latency_ms || 0), 0);
+      const avgLatency = Math.round(sumLatency / total);
+      document.getElementById('stat-latency').innerText = `${avgLatency}ms`;
+    }
+
+    // Renders trace rows into the log table
+    function renderTracesTable(filtered = recentTraces) {
+      const tbody = document.getElementById('traces-table-body');
+      tbody.innerHTML = '';
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding: 40px;">No executions logged yet</td></tr>`;
+        return;
+      }
+
+      filtered.forEach((trace) => {
+        const tr = document.createElement('tr');
+        tr.className = `clickable-row ${selectedTrace && selectedTrace.request_id === trace.request_id ? 'active-row' : ''}`;
+        tr.onclick = () => selectTrace(trace.request_id, tr);
+        
+        const dateStr = trace.start_time ? new Date(trace.start_time).toLocaleTimeString() : 'N/A';
+        const satisfiedBadge = trace.satisfied 
+          ? `<span class="badge success">Satisfied</span>` 
+          : `<span class="badge failed">Failed</span>`;
+
+        tr.innerHTML = `
+          <td style="max-width: 250px; font-weight: 500; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${trace.goal}</td>
+          <td>${satisfiedBadge}</td>
+          <td>${trace.step_count} steps</td>
+          <td>${Math.round(trace.total_latency_ms)}ms</td>
+          <td style="color:var(--text-muted)">${dateStr}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Goal filtering function
+    function filterTraces() {
+      const q = document.getElementById('search-bar').value.toLowerCase();
+      const filtered = recentTraces.filter(t => t.goal.toLowerCase().includes(q));
+      renderTracesTable(filtered);
+    }
+
+    // Fetch and select details of a single trace
+    async function selectTrace(requestId, rowElement) {
+      // Highlight row
+      document.querySelectorAll('.clickable-row').forEach(r => r.classList.remove('active-row'));
+      rowElement.classList.add('active-row');
+
+      const content = document.getElementById('inspector-content-container');
+      content.innerHTML = `<div class="loading-container"><div class="spinner"></div> Fetching detailed state logs...</div>`;
+
+      try {
+        const response = await fetch(`/chain/trace/${requestId}`);
+        if (!response.ok) throw new Error("Failed to load details");
+        selectedTrace = await response.json();
+        renderInspectorHeader();
+        renderTabContent();
+      } catch (err) {
+        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading trace: ${err.message}</div>`;
+      }
+    }
+
+    // Updates header details
+    function renderInspectorHeader() {
+      const header = document.getElementById('inspector-header-container');
+      if (!selectedTrace) return;
+      header.innerHTML = `
+        <h2>Inspect: ${selectedTrace.goal.slice(0, 45)}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
+        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong></p>
+      `;
+    }
+
+    // Handle tab toggle
+    function switchTab(tab) {
+      activeTab = tab;
+      document.getElementById('tab-timeline-btn').classList.toggle('active', tab === 'timeline');
+      document.getElementById('tab-llm-btn').classList.toggle('active', tab === 'llm');
+      renderTabContent();
+    }
+
+    // Renders inner panel depending on the selected tab
+    function renderTabContent() {
+      const container = document.getElementById('inspector-content-container');
+      if (!selectedTrace) return;
+
+      container.innerHTML = '';
+
+      if (activeTab === 'timeline') {
+        const timeline = document.createElement('div');
+        timeline.className = 'timeline';
+
+        // Add Planning start indicator
+        let nodesHtml = `
+          <div class="timeline-node">
+            <div class="node-marker success">P</div>
+            <div class="node-content">
+              <div class="node-header">
+                <span class="node-title">Model Decomposed Plan</span>
+              </div>
+              <div class="node-meta"><strong>Steps:</strong></div>
+              <ol style="margin-left: 20px; font-size: 0.8rem; line-height: 1.4;">
+                ${selectedTrace.plan.steps.map(s => `<li><strong>${s.tool}</strong>: ${s.reason}</li>`).join('')}
+              </ol>
+            </div>
+          </div>
+        `;
+
+        // Render tool executions
+        selectedTrace.results.forEach((step, idx) => {
+          const isSuccess = step.success;
+          const markerClass = isSuccess ? 'success' : 'failed';
+          const markerContent = isSuccess ? '✓' : '✗';
+          
+          let apiLogsHtml = '';
+          if (step.api_calls && step.api_calls.length > 0) {
+            step.api_calls.forEach(call => {
+              apiLogsHtml += `
+                <div class="api-call-box">
+                  <div class="api-header">
+                    <span>API Call: ${call.method} ${call.status}</span>
+                    <span>${call.latency_ms}ms</span>
+                  </div>
+                  <div style="font-size:0.75rem; word-break: break-all; color:var(--text-muted)"><strong>URL:</strong> ${call.url}</div>
+                  <details style="margin-top:6px;">
+                    <summary style="font-size:0.7rem; color:var(--accent); cursor:pointer;">Show Response Payload JSON</summary>
+                    <pre style="margin-top:4px; max-height: 150px; overflow-y: auto;">${JSON.stringify(call.response_payload, null, 2)}</pre>
+                  </details>
+                </div>
+              `;
+            });
+          }
+
+          nodesHtml += `
+            <div class="timeline-node">
+              <div class="node-marker ${markerClass}">${markerContent}</div>
+              <div class="node-content">
+                <div class="node-header">
+                  <span class="node-title">Step ${step.step_id}: ${step.tool}</span>
+                  <span class="node-latency">${step.latency_ms || 0}ms</span>
+                </div>
+                <div class="node-meta"><strong>Input parameters:</strong> ${JSON.stringify(step.tool_input)}</div>
+                ${step.output ? `<div class="node-meta" style="color:var(--text-main)"><strong>Output:</strong> ${step.output}</div>` : ''}
+                ${step.error ? `<div class="node-meta" style="color:var(--danger)"><strong>Error:</strong> ${step.error}</div>` : ''}
+                ${apiLogsHtml}
+              </div>
+            </div>
+          `;
+        });
+
+        // Add Verification result node
+        const verifyClass = selectedTrace.verify.satisfied ? 'success' : 'failed';
+        const verifyMarker = selectedTrace.verify.satisfied ? '★' : '⚠';
+        nodesHtml += `
+          <div class="timeline-node">
+            <div class="node-marker ${verifyClass}">${verifyMarker}</div>
+            <div class="node-content">
+              <div class="node-header">
+                <span class="node-title">Verification Outcome</span>
+              </div>
+              <div class="node-meta"><strong>Summary:</strong> ${selectedTrace.verify.final_summary}</div>
+              ${selectedTrace.verify.missing.length > 0 ? `<div class="node-meta" style="color:var(--warning)"><strong>Missing targets:</strong> ${selectedTrace.verify.missing.join(', ')}</div>` : ''}
+              ${selectedTrace.verify.repair_steps.length > 0 ? `<div class="node-meta" style="color:var(--accent)"><strong>Proposed repair:</strong> ${selectedTrace.verify.repair_steps.length} steps</div>` : ''}
+            </div>
+          </div>
+        `;
+
+        timeline.innerHTML = nodesHtml;
+        container.appendChild(timeline);
+      } else {
+        // Renders Gemini model prompt history logs
+        const logsContainer = document.createElement('div');
+        logsContainer.style.display = 'flex';
+        logsContainer.style.flexDirection = 'column';
+        logsContainer.style.gap = '20px';
+
+        if (!selectedTrace.llm_calls || selectedTrace.llm_calls.length === 0) {
+          logsContainer.innerHTML = `<div class="loading-container">No model call telemetry found in trace document</div>`;
+        } else {
+          selectedTrace.llm_calls.forEach((call, index) => {
+            const item = document.createElement('div');
+            item.className = 'log-item';
+            
+            item.innerHTML = `
+              <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px;">
+                <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${call.stage}</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
+              </div>
+              
+              <div class="sub-title">System Instruction</div>
+              <pre>${call.system_prompt}</pre>
+              
+              <div class="sub-title" style="margin-top:10px;">User Input / Content Prompt</div>
+              <pre>${call.user_prompt}</pre>
+              
+              <div class="sub-title" style="margin-top:10px;">Raw Model Response Output</div>
+              <pre style="border-color: rgba(16, 185, 129, 0.2);">${call.raw_response}</pre>
+            `;
+            logsContainer.appendChild(item);
+          });
+        }
+        container.appendChild(logsContainer);
+      }
+    }
+  </script>
+</body>
+</html>
