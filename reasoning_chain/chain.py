@@ -19,6 +19,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from .schemas import ChainTrace, Plan, PlanStep, StepResult, VerifyResult, ModelCall
 from .tools import TOOL_REGISTRY, ToolError
@@ -260,7 +261,7 @@ def verify_and_repair(
     return VerifyResult.model_validate(data)
 
 
-def run_chain(goal: str) -> ChainTrace:
+def run_chain(goal: str, conversation_context: Optional[str] = None) -> ChainTrace:
     """The full orchestrator using a step-by-step ReAct loop."""
     start_time = datetime.now(timezone.utc).isoformat()
     chain_start = time.perf_counter()
@@ -291,6 +292,14 @@ def run_chain(goal: str) -> ChainTrace:
         "   {\"satisfied\": true, \"final_summary\": \"explain the final answer here\"}\n"
         "Respond with ONLY the JSON object, no prose, no markdown formatting."
     )
+
+    if conversation_context:
+        system += (
+            f"\n\nHere is the history of the conversation so far in this session:\n{conversation_context}\n\n"
+            "Use this history to resolve contextual, relative, or follow-up instructions "
+            "(e.g. 'add 5 to the previous output' means finding the numerical result of the previous turn in the chat context "
+            "and planning a calculator step to add 5 to it)."
+        )
 
     while step_count < max_steps:
         # Build history payload for this step

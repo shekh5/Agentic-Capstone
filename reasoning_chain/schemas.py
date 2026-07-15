@@ -83,3 +83,11 @@ class ChainTrace(BaseModel):
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     total_tokens: int = 0
+    session_id: Optional[str] = None
+
+
+class SessionMessage(BaseModel):
+    sender: str
+    text: str
+    timestamp: str
+    trace: Optional[dict] = None

@@ -18,10 +18,12 @@ import json
 import logging
 import os
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 
 from .chain import decompose_goal, run_chain
-from .schemas import ChainTrace, Plan
+from .schemas import ChainTrace, Plan, SessionMessage
 
 logger = logging.getLogger("reasoning_chain")
 router = APIRouter()
@@ -62,15 +64,76 @@ def plan_only(goal: str):
 
 
 @router.post("/run", response_model=ChainTrace)
-def run(goal: str):
-    """Full plan -> execute -> verify -> repair loop. Returns the entire
-    trace so the caller (or you, debugging) can see every step."""
+def run(goal: str, session_id: Optional[str] = None):
+    """Full plan -> execute -> verify -> repair loop using ReAct steps. 
+    Accepts session_id to load conversation history memory."""
+    context_str = ""
+    if session_id and _redis:
+        try:
+            raw_msgs = _redis.lrange(f"session:{session_id}:messages", 0, -1)
+            for raw in raw_msgs:
+                msg = json.loads(raw)
+                context_str += f"[{msg['sender'].capitalize()}]: {msg['text']}\n"
+        except Exception as e:
+            logger.warning(f"failed to load session context: {e}")
+
     try:
-        trace = run_chain(goal)
+        trace = run_chain(goal, conversation_context=context_str if context_str else None)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"chain failed: {e}") from e
+
+    if session_id:
+        trace.session_id = session_id
+
     _log_trace(trace)
+
+    if session_id and _redis:
+        try:
+            user_msg = {
+                "sender": "user",
+                "text": goal,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            agent_msg = {
+                "sender": "agent",
+                "text": trace.verify.final_summary,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "trace": trace.model_dump()
+            }
+            _redis.rpush(f"session:{session_id}:messages", json.dumps(user_msg))
+            _redis.rpush(f"session:{session_id}:messages", json.dumps(agent_msg))
+            _redis.expire(f"session:{session_id}:messages", 7 * 24 * 3600)
+        except Exception as e:
+            logger.warning(f"failed to append session messages: {e}")
+
     return trace
+
+
+@router.get("/session/{session_id}")
+def get_session_messages(session_id: str):
+    """Retrieves all message turns logged for a given session ID."""
+    if _redis is None:
+        return []
+    try:
+        raw_msgs = _redis.lrange(f"session:{session_id}:messages", 0, -1)
+        return [json.loads(raw) for raw in raw_msgs]
+    except Exception as e:
+        logger.warning(f"failed to fetch session messages: {e}")
+        return []
+
+
+@router.post("/session/{session_id}/message")
+def append_session_message(session_id: str, message: SessionMessage):
+    """Logs an arbitrary chat message turn into a session's history log."""
+    if _redis is None:
+        return {"status": "error", "message": "Redis storage is not configured"}
+    try:
+        _redis.rpush(f"session:{session_id}:messages", message.model_dump_json())
+        _redis.expire(f"session:{session_id}:messages", 7 * 24 * 3600)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.warning(f"failed to append session message: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/trace/{request_id}")
