@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -95,3 +96,23 @@ def test_chain_run_route_is_mounted():
 
     assert r.status_code == 200
     assert r.json()["request_id"] == "req-1"
+
+
+def test_chain_traces_route_is_mounted():
+    with patch("reasoning_chain.router._redis") as mock_redis:
+        mock_redis.lrange.return_value = ["req-1"]
+        mock_redis.get.return_value = json.dumps({
+            "request_id": "req-1",
+            "goal": "test goal",
+            "start_time": "2026-07-15T00:00:00Z",
+            "total_latency_ms": 150.0,
+            "verify": {"satisfied": True, "final_summary": "done"},
+            "repair_rounds": 0,
+            "results": []
+        })
+
+        r = client.get("/chain/traces")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+        assert r.json()[0]["request_id"] == "req-1"
+        assert r.json()[0]["satisfied"] is True
