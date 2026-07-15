@@ -246,12 +246,72 @@
     }
 
     .panel-header {
-      margin-bottom: 16px;
+      flex: 1;
     }
 
     .panel-header h2 {
       font-size: 1.1rem;
       font-weight: 700;
+    }
+
+    .panel-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 16px;
+    }
+
+    .share-btn {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: 8px;
+      color: #818cf8;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      margin-top: 2px;
+    }
+
+    .share-btn:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.4);
+      color: white;
+    }
+
+    /* Toast Notification Overlay */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1f2937;
+      border: 1px solid var(--success);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+      z-index: 9999;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
     }
 
     .panel-header p {
@@ -521,9 +581,15 @@
 
     <!-- Right Column: Detail Inspector -->
     <div class="card inspector-panel">
-      <div class="panel-header" id="inspector-header-container">
-        <h2>Trace Inspector</h2>
-        <p>Select a trace row on the left to examine details</p>
+      <div class="panel-header-row">
+        <div class="panel-header" id="inspector-header-container">
+          <h2>Trace Inspector</h2>
+          <p>Select a trace row on the left to examine details</p>
+        </div>
+        <button class="share-btn" id="share-btn" style="display: none;" onclick="copyShareLink()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>
+          Share
+        </button>
       </div>
 
       <!-- Tabs -->
@@ -551,6 +617,37 @@
       fetchRecentTraces();
     });
 
+    function formatJSON(val) {
+      if (val === null || val === undefined) return '';
+      if (typeof val === 'object') {
+        return JSON.stringify(val, null, 2);
+      }
+      if (typeof val === 'string') {
+        try {
+          // Check if it's actually valid JSON string
+          const parsed = JSON.parse(val);
+          return JSON.stringify(parsed, null, 2);
+        } catch {
+          return val;
+        }
+      }
+      return String(val);
+    }
+
+    function copyShareLink() {
+      if (!selectedTrace) return;
+      const shareUrl = window.location.origin + '/dashboard?trace=' + selectedTrace.request_id;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        const toast = document.getElementById('copy-toast');
+        toast.classList.add('show');
+        setTimeout(() => {
+          toast.classList.remove('show');
+        }, 2500);
+      }).catch(err => {
+        alert("Copy failed, here is your link: " + shareUrl);
+      });
+    }
+
     // Fetch traces list metadata
     async function fetchRecentTraces() {
       const tbody = document.getElementById('traces-table-body');
@@ -562,8 +659,40 @@
         recentTraces = await response.json();
         renderTracesTable();
         calculateMetrics();
+        
+        // Auto routing loader check for shared traces
+        const urlParams = new URLSearchParams(window.location.search);
+        const traceId = urlParams.get('trace');
+        if (traceId) {
+          const matchingIndex = recentTraces.findIndex(t => t.request_id === traceId);
+          if (matchingIndex !== -1) {
+            setTimeout(() => {
+              const rows = document.querySelectorAll('.clickable-row');
+              if (rows[matchingIndex]) {
+                selectTrace(traceId, rows[matchingIndex]);
+              }
+            }, 150);
+          } else {
+            selectTraceDirectly(traceId);
+          }
+        }
       } catch (err) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding: 40px;">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function selectTraceDirectly(requestId) {
+      const content = document.getElementById('inspector-content-container');
+      content.innerHTML = `<div class="loading-container"><div class="spinner"></div> Fetching shared trace payload...</div>`;
+      try {
+        const response = await fetch(`/chain/trace/${requestId}`);
+        if (!response.ok) throw new Error("Failed to load details");
+        selectedTrace = await response.json();
+        document.getElementById('share-btn').style.display = 'flex';
+        renderInspectorHeader();
+        renderTabContent();
+      } catch (err) {
+        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading shared trace: ${err.message}</div>`;
       }
     }
 
@@ -638,6 +767,7 @@
         const response = await fetch(`/chain/trace/${requestId}`);
         if (!response.ok) throw new Error("Failed to load details");
         selectedTrace = await response.json();
+        document.getElementById('share-btn').style.display = 'flex';
         renderInspectorHeader();
         renderTabContent();
       } catch (err) {
@@ -723,9 +853,9 @@
                   <span class="node-title">Step ${step.step_id}: ${step.tool}</span>
                   <span class="node-latency">${step.latency_ms || 0}ms</span>
                 </div>
-                <div class="node-meta"><strong>Input parameters:</strong> ${JSON.stringify(step.tool_input)}</div>
-                ${step.output ? `<div class="node-meta" style="color:var(--text-main)"><strong>Output:</strong> ${step.output}</div>` : ''}
-                ${step.error ? `<div class="node-meta" style="color:var(--danger)"><strong>Error:</strong> ${step.error}</div>` : ''}
+                <div class="node-meta"><strong>Input parameters:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.tool_input)}</pre></div>
+                ${step.output ? `<div class="node-meta" style="color:var(--text-main)"><strong>Output:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.output)}</pre></div>` : ''}
+                ${step.error ? `<div class="node-meta" style="color:var(--danger)"><strong>Error:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(239,68,68,0.05); border-color:rgba(239,68,68,0.2);">${formatJSON(step.error)}</pre></div>` : ''}
                 ${apiLogsHtml}
               </div>
             </div>
@@ -772,13 +902,13 @@
               </div>
               
               <div class="sub-title">System Instruction</div>
-              <pre>${call.system_prompt}</pre>
+              <pre>${formatJSON(call.system_prompt)}</pre>
               
               <div class="sub-title" style="margin-top:10px;">User Input / Content Prompt</div>
-              <pre>${call.user_prompt}</pre>
+              <pre>${formatJSON(call.user_prompt)}</pre>
               
               <div class="sub-title" style="margin-top:10px;">Raw Model Response Output</div>
-              <pre style="border-color: rgba(16, 185, 129, 0.2);">${call.raw_response}</pre>
+              <pre style="border-color: rgba(16, 185, 129, 0.2);">${formatJSON(call.raw_response)}</pre>
             `;
             logsContainer.appendChild(item);
           });
@@ -787,5 +917,9 @@
       }
     }
   </script>
+  <div class="toast" id="copy-toast">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+    <span>Link copied to clipboard!</span>
+  </div>
 </body>
 </html>
