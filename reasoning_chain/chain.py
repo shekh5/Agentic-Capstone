@@ -67,13 +67,15 @@ def decompose_goal(goal: str) -> Plan:
     as structured JSON only -- not prose."""
     system = (
         "You break a user's goal into a short sequence of tool calls. "
-        "Available tools: calculator(expression: str), "
-        "get_time(timezone_name: str), weather(city: str). "
+        "Available tools:\n"
+        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
+        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
+        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
         f"Use at most {MAX_STEPS} steps. "
         "Respond with ONLY a JSON object matching this shape, no prose, "
         "no markdown fences: "
         '{"goal": str, "steps": [{"step_id": int, "tool": str, '
-        '"tool_input": object, "reason": str}]}'
+        '"tool_input": dict, "reason": str}]}'
     )
     resp = _get_client().models.generate_content(
         model=MODEL,
@@ -153,11 +155,15 @@ def verify_and_repair(goal: str, plan: Plan, results: list[StepResult]) -> Verif
     system = (
         "You check whether tool results satisfy the user's goal. "
         "If something failed or is missing, propose at most 2 repair "
-        "steps using the same tools. If a repair isn't possible, say so "
+        "steps using the same tools. Available tools:\n"
+        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
+        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
+        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
+        "If a repair isn't possible, say so "
         "plainly in final_summary instead of guessing. "
         "Respond with ONLY JSON: {\"satisfied\": bool, \"missing\": "
         "[str], \"repair_steps\": [{\"step_id\": int, \"tool\": str, "
-        "\"tool_input\": object, \"reason\": str}], \"final_summary\": str}"
+        "\"tool_input\": dict, \"reason\": str}], \"final_summary\": str}"
     )
     payload = {
         "goal": goal,
