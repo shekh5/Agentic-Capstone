@@ -372,8 +372,11 @@ def run_chain(goal: str) -> ChainTrace:
         step_results = execute_plan(single_plan)
         
         if step_results:
-            # Re-map result to step history (retaining execution outputs)
-            results.append(step_results[0])
+            res = step_results[0]
+            res.prompt_tokens = p_tok
+            res.completion_tokens = c_tok
+            res.total_tokens = t_tok
+            results.append(res)
             
         step_count += 1
     else:

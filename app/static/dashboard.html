@@ -896,9 +896,12 @@
             <div class="timeline-node">
               <div class="node-marker ${markerClass}">${markerContent}</div>
               <div class="node-content">
-                <div class="node-header">
+                <div class="node-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                   <span class="node-title">Step ${step.step_id}: ${step.tool}</span>
-                  <span class="node-latency">${step.latency_ms || 0}ms</span>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    ${step.total_tokens ? `<span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.65rem; font-weight:600; padding:2px 8px; border-radius:50px; text-transform:none;">Tokens: ${step.total_tokens} (In: ${step.prompt_tokens} / Out: ${step.completion_tokens})</span>` : ''}
+                    <span class="node-latency">${step.latency_ms || 0}ms</span>
+                  </div>
                 </div>
                 <div class="node-meta"><strong>Input parameters:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.tool_input)}</pre></div>
                 ${step.output ? `<div class="node-meta" style="color:var(--text-main)"><strong>Output:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.output)}</pre></div>` : ''}

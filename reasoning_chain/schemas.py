@@ -54,6 +54,9 @@ class StepResult(BaseModel):
     attempt: int = 1
     latency_ms: float = 0.0
     api_calls: list[dict] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class VerifyResult(BaseModel):
