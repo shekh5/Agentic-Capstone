@@ -16,6 +16,7 @@ made it into stdout logs.
 
 import json
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException
 
@@ -28,11 +29,12 @@ router = APIRouter()
 try:
     import redis
 
-    _redis = redis.Redis(host="redis", port=6379, decode_responses=True, socket_connect_timeout=1)
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    _redis = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1)
     _redis.ping()
-except Exception:
+except Exception as e:
     _redis = None
-    logger.warning("Redis unavailable -- chain traces will not be persisted")
+    logger.warning(f"Redis unavailable ({e}) -- chain traces will not be persisted")
 
 
 def _log_trace(trace: ChainTrace) -> None:
