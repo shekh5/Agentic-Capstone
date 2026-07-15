@@ -5,9 +5,12 @@ A FastAPI service that exposes an /agent endpoint and mounts the
 reasoning chain documented in README.md under /chain.
 """
 
+import json
 import math
 import os
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -42,8 +45,23 @@ def tool_get_time() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def tool_get_weather_mock(city: str) -> str:
-    """Mocked weather tool (no external API call, deterministic for tests)."""
+def tool_get_weather(city: str) -> str:
+    """Gets current weather data. Uses WeatherAPI.com if WEATHER_API_KEY is in env."""
+    api_key = os.environ.get("WEATHER_API_KEY")
+    if api_key:
+        try:
+            safe_city = urllib.parse.quote(city)
+            url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                loc_name = data["location"]["name"]
+                cond = data["current"]["condition"]["text"]
+                temp = data["current"]["temp_c"]
+                return f"{loc_name}: {cond}, {temp}°C"
+        except Exception as e:
+            return f"Error: Weather API call failed: {e}"
+
     fake_data = {
         "san francisco": "62F, foggy",
         "new york": "75F, sunny",
@@ -56,7 +74,7 @@ def tool_get_weather_mock(city: str) -> str:
 TOOLS = {
     "calculator": tool_calculator,
     "get_time": tool_get_time,
-    "get_weather": tool_get_weather_mock,
+    "get_weather": tool_get_weather,
 }
 
 
@@ -123,7 +141,7 @@ def run_agent(req: AgentRequest):
             if not req.argument:
                 detail = "get_weather requires 'argument' (city)"
                 raise HTTPException(status_code=400, detail=detail)
-            result = tool_get_weather_mock(req.argument)
+            result = tool_get_weather(req.argument)
         else:
             raise HTTPException(status_code=400, detail="Tool not implemented")
     except ValueError as e:

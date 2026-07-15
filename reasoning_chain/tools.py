@@ -11,8 +11,12 @@ so you never actually exercise your retry/repair code paths until it's
 pull that 3am bug into your test suite instead.
 """
 
+import json
+import os
 import random
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 # Toggle / tune via env vars in real deployment; hardcoded here for clarity.
@@ -45,6 +49,21 @@ def get_time(timezone_name: str = "UTC") -> str:
 
 
 def weather(city: str) -> str:
+    api_key = os.environ.get("WEATHER_API_KEY")
+    if api_key:
+        try:
+            safe_city = urllib.parse.quote(city)
+            url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                loc_name = data["location"]["name"]
+                cond = data["current"]["condition"]["text"]
+                temp = data["current"]["temp_c"]
+                return f"{loc_name}: {cond}, {temp}°C"
+        except Exception as e:
+            raise ToolError(f"weather api call failed for {city!r}: {e}")
+
     if random.random() < WEATHER_FAILURE_RATE:
         # Simulate a timeout to a third-party weather API.
         time.sleep(0.05)
