@@ -105,6 +105,7 @@ def list_traces(limit: int = 20):
                     "satisfied": trace_data.get("verify", {}).get("satisfied", False),
                     "repair_rounds": trace_data.get("repair_rounds"),
                     "step_count": len(trace_data.get("results", [])),
+                    "total_tokens": trace_data.get("total_tokens", 0),
                 })
         return traces
     except Exception as e:

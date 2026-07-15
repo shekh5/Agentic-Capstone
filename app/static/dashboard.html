@@ -106,9 +106,15 @@
     /* Metrics Grid */
     .metrics-row {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 16px;
       margin-bottom: 24px;
+    }
+
+    @media (min-width: 640px) {
+      .metrics-row {
+        grid-template-columns: repeat(4, 1fr);
+      }
     }
 
     .metric-card {
@@ -551,6 +557,10 @@
           <span class="metric-label">Avg Latency</span>
           <span class="metric-value" id="stat-latency">0ms</span>
         </div>
+        <div class="metric-card">
+          <span class="metric-label">Tokens Consumed</span>
+          <span class="metric-value" id="stat-tokens">0</span>
+        </div>
       </div>
 
       <!-- Traces list card -->
@@ -568,6 +578,7 @@
                 <th>Status</th>
                 <th>Steps</th>
                 <th>Latency</th>
+                <th>Tokens</th>
                 <th>Time</th>
               </tr>
             </thead>
@@ -732,6 +743,7 @@
       if (total === 0) {
         document.getElementById('stat-success').innerText = '0%';
         document.getElementById('stat-latency').innerText = '0ms';
+        document.getElementById('stat-tokens').innerText = '0';
         return;
       }
 
@@ -742,6 +754,9 @@
       const sumLatency = recentTraces.reduce((acc, t) => acc + (t.total_latency_ms || 0), 0);
       const avgLatency = Math.round(sumLatency / total);
       document.getElementById('stat-latency').innerText = `${avgLatency}ms`;
+
+      const sumTokens = recentTraces.reduce((acc, t) => acc + (t.total_tokens || 0), 0);
+      document.getElementById('stat-tokens').innerText = sumTokens.toLocaleString();
     }
 
     // Renders trace rows into the log table
@@ -750,7 +765,7 @@
       tbody.innerHTML = '';
 
       if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding: 40px;">No executions logged yet</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding: 40px;">No executions logged yet</td></tr>`;
         return;
       }
 
@@ -769,6 +784,7 @@
           <td>${satisfiedBadge}</td>
           <td>${trace.step_count} steps</td>
           <td>${Math.round(trace.total_latency_ms)}ms</td>
+          <td>${trace.total_tokens ? trace.total_tokens.toLocaleString() : 0}</td>
           <td style="color:var(--text-muted)">${dateStr}</td>
         `;
         tbody.appendChild(tr);
@@ -807,9 +823,12 @@
     function renderInspectorHeader() {
       const header = document.getElementById('inspector-header-container');
       if (!selectedTrace) return;
+      const promptTok = selectedTrace.total_prompt_tokens || 0;
+      const compTok = selectedTrace.total_completion_tokens || 0;
+      const totalTok = selectedTrace.total_tokens || 0;
       header.innerHTML = `
         <h2>Inspect: ${selectedTrace.goal.slice(0, 45)}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
-        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong></p>
+        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${totalTok.toLocaleString()}</strong> (Prompt: ${promptTok} / Output: ${compTok})</p>
       `;
     }
 
@@ -924,8 +943,9 @@
             item.className = 'log-item';
             
             item.innerHTML = `
-              <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px;">
+              <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${call.stage}</span>
+                <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Tokens: ${call.total_tokens || 0} (In: ${call.prompt_tokens || 0} / Out: ${call.completion_tokens || 0})</span>
                 <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
               </div>
               

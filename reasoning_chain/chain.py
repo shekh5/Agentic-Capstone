@@ -91,12 +91,22 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
     )
     raw = resp.text
     if model_calls is not None:
+        p_tok = 0
+        c_tok = 0
+        t_tok = 0
+        if resp.usage_metadata:
+            p_tok = resp.usage_metadata.prompt_token_count or 0
+            c_tok = resp.usage_metadata.candidates_token_count or 0
+            t_tok = resp.usage_metadata.total_token_count or 0
         model_calls.append(
             ModelCall(
                 stage="decompose",
                 system_prompt=system,
                 user_prompt=goal,
                 raw_response=raw,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
             )
         )
     data = _extract_json(raw)
@@ -309,12 +319,23 @@ def run_chain(goal: str) -> ChainTrace:
         )
         raw = resp.text
         
+        p_tok = 0
+        c_tok = 0
+        t_tok = 0
+        if resp.usage_metadata:
+            p_tok = resp.usage_metadata.prompt_token_count or 0
+            c_tok = resp.usage_metadata.candidates_token_count or 0
+            t_tok = resp.usage_metadata.total_token_count or 0
+
         model_calls.append(
             ModelCall(
                 stage=f"step_{step_count + 1}",
                 system_prompt=system,
                 user_prompt=json.dumps(history_payload),
                 raw_response=raw,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
             )
         )
         
@@ -359,6 +380,10 @@ def run_chain(goal: str) -> ChainTrace:
         satisfied = False
         final_summary = f"Stopped after reaching maximum of {max_steps} steps."
 
+    total_prompt_tokens = sum(c.prompt_tokens for c in model_calls)
+    total_completion_tokens = sum(c.completion_tokens for c in model_calls)
+    total_tokens = sum(c.total_tokens for c in model_calls)
+
     total_latency_ms = (time.perf_counter() - chain_start) * 1000
     end_time = datetime.now(timezone.utc).isoformat()
 
@@ -378,4 +403,7 @@ def run_chain(goal: str) -> ChainTrace:
         end_time=end_time,
         total_latency_ms=round(total_latency_ms, 2),
         llm_calls=model_calls,
+        total_prompt_tokens=total_prompt_tokens,
+        total_completion_tokens=total_completion_tokens,
+        total_tokens=total_tokens,
     )

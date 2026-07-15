@@ -39,6 +39,9 @@ class ModelCall(BaseModel):
     system_prompt: str
     user_prompt: str
     raw_response: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class StepResult(BaseModel):
@@ -74,3 +77,6 @@ class ChainTrace(BaseModel):
     end_time: str = ""
     total_latency_ms: float = 0.0
     llm_calls: list[ModelCall] = Field(default_factory=list)
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
