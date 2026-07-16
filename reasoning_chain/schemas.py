@@ -91,3 +91,9 @@ class SessionMessage(BaseModel):
     text: str
     timestamp: str
     trace: Optional[dict] = None
+
+
+class SessionMetadata(BaseModel):
+    id: str
+    title: str
+    created_at: str

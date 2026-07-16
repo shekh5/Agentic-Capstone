@@ -23,7 +23,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from .chain import decompose_goal, run_chain
-from .schemas import ChainTrace, Plan, SessionMessage
+from .schemas import ChainTrace, Plan, SessionMessage, SessionMetadata
 
 logger = logging.getLogger("reasoning_chain")
 router = APIRouter()
@@ -102,11 +102,45 @@ def run(goal: str, session_id: Optional[str] = None):
             }
             _redis.rpush(f"session:{session_id}:messages", json.dumps(user_msg))
             _redis.rpush(f"session:{session_id}:messages", json.dumps(agent_msg))
-            _redis.expire(f"session:{session_id}:messages", 7 * 24 * 3600)
         except Exception as e:
             logger.warning(f"failed to append session messages: {e}")
 
     return trace
+
+
+@router.get("/sessions")
+def list_sessions(limit: int = 100):
+    """Retrieves list of all saved chat session metadata summaries."""
+    if _redis is None:
+        return []
+    try:
+        session_ids = _redis.lrange("chain_sessions_list", 0, limit - 1)
+        sessions = []
+        for s_id in session_ids:
+            raw = _redis.get(f"session:{s_id}:metadata")
+            if raw:
+                sessions.append(json.loads(raw))
+        return sessions
+    except Exception as e:
+        logger.warning(f"failed to list sessions: {e}")
+        return []
+
+
+@router.post("/session/{session_id}/metadata")
+def update_session_metadata(session_id: str, meta: SessionMetadata):
+    """Updates or inserts the metadata summary of a session (e.g. title)."""
+    if _redis is None:
+        return {"status": "error", "message": "Redis storage is not configured"}
+    try:
+        _redis.set(f"session:{session_id}:metadata", meta.model_dump_json())
+        session_ids = _redis.lrange("chain_sessions_list", 0, -1)
+        if session_id not in session_ids:
+            _redis.lpush("chain_sessions_list", session_id)
+            _redis.ltrim("chain_sessions_list", 0, 99)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.warning(f"failed to save session metadata: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/session/{session_id}")
@@ -129,7 +163,6 @@ def append_session_message(session_id: str, message: SessionMessage):
         return {"status": "error", "message": "Redis storage is not configured"}
     try:
         _redis.rpush(f"session:{session_id}:messages", message.model_dump_json())
-        _redis.expire(f"session:{session_id}:messages", 7 * 24 * 3600)
         return {"status": "ok"}
     except Exception as e:
         logger.warning(f"failed to append session message: {e}")

@@ -588,29 +588,47 @@
       });
     }
 
-    // Start a completely new chat session
-    function startNewSession() {
+    // Start a completely new chat session on the server and client
+    async function startNewSession() {
       const sessionId = generateUUID();
       currentSessionId = sessionId;
+      const createdAt = new Date().toISOString();
       
       const newSession = {
         id: sessionId,
         title: 'New Chat',
-        created_at: new Date().toISOString()
+        created_at: createdAt
       };
       
       sessions.unshift(newSession);
       saveSessionsToLocalStorage();
+      
+      // Save metadata to server
+      await saveSessionMetadataToServer(sessionId, 'New Chat', createdAt);
       
       renderSidebar();
       clearChatArea();
       appendSystemGreeting();
     }
 
+    // Save session metadata to the server
+    async function saveSessionMetadataToServer(sessionId, title, createdAt) {
+      try {
+        await fetch(`/chain/session/${sessionId}/metadata`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: sessionId, title: title, created_at: createdAt })
+        });
+      } catch (err) {
+        console.warn("Failed to persist session metadata to server:", err);
+      }
+    }
+
     function clearChatArea() {
       chatMessagesContainer.innerHTML = '';
     }
 
+    // Backup greeting fallback
     function appendSystemGreeting() {
       appendMessage('agent', 
         `Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
@@ -620,12 +638,12 @@
       );
     }
 
-    // Save chat threads lists to localStorage
+    // Save chat threads lists to localStorage (backup fallback)
     function saveSessionsToLocalStorage() {
       localStorage.setItem('agentic_chat_sessions', JSON.stringify(sessions));
     }
 
-    // Load chat threads from localStorage
+    // Load chat threads from localStorage (backup fallback)
     function loadSessionsFromLocalStorage() {
       const stored = localStorage.getItem('agentic_chat_sessions');
       if (stored) {
@@ -633,6 +651,25 @@
       } else {
         sessions = [];
       }
+    }
+
+    // Load sessions list from the server
+    async function loadSessionsFromServer() {
+      try {
+        const response = await fetch('/chain/sessions');
+        if (!response.ok) throw new Error("Failed to load");
+        const serverSessions = await response.json();
+        if (serverSessions && serverSessions.length > 0) {
+          sessions = serverSessions;
+          saveSessionsToLocalStorage(); // sync fallback
+        } else {
+          loadSessionsFromLocalStorage();
+        }
+      } catch (err) {
+        console.warn("Failed to retrieve sessions from server, using local storage fallback:", err);
+        loadSessionsFromLocalStorage();
+      }
+      renderSidebar();
     }
 
     // Render the list of chat threads in the sidebar
@@ -730,7 +767,7 @@
           await logManualMessage('agent', resultText);
           
           // If first message in thread, update title
-          checkAndUpdateSessionTitle(goal);
+          await checkAndUpdateSessionTitle(goal);
         } else {
           const goal = document.getElementById('goal-input').value;
           
@@ -750,7 +787,7 @@
           appendMessage('agent', data.verify.final_summary, new Date().toLocaleTimeString(), traceHtml);
           
           // If first message in thread, update title
-          checkAndUpdateSessionTitle(goal);
+          await checkAndUpdateSessionTitle(goal);
         }
       } catch (error) {
         appendMessage('agent', `<span style="color:var(--danger)">Error: ${error.message}</span>`);
@@ -784,12 +821,16 @@
     }
 
     // Update title of session on first message
-    function checkAndUpdateSessionTitle(firstQuery) {
+    async function checkAndUpdateSessionTitle(firstQuery) {
       const activeIdx = sessions.findIndex(s => s.id === currentSessionId);
       if (activeIdx !== -1 && sessions[activeIdx].title === 'New Chat') {
         const cleanTitle = firstQuery.length > 25 ? firstQuery.slice(0, 25) + '...' : firstQuery;
         sessions[activeIdx].title = cleanTitle;
         saveSessionsToLocalStorage();
+        
+        // Persist title update to server
+        await saveSessionMetadataToServer(currentSessionId, cleanTitle, sessions[activeIdx].created_at);
+        
         renderSidebar();
       }
     }
@@ -846,15 +887,18 @@
     }
 
     // Startup bootstrap loader
-    loadSessionsFromLocalStorage();
-    if (sessions.length > 0) {
-      selectSession(sessions[0].id);
-    } else {
-      startNewSession();
+    async function initChat() {
+      await loadSessionsFromServer();
+      if (sessions.length > 0) {
+        selectSession(sessions[0].id);
+      } else {
+        await startNewSession();
+      }
     }
     
-    // Default form inputs render
+    // Default form inputs render and start loader
     switchMode('chain');
+    initChat();
   </script>
 </body>
 </html>
