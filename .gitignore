@@ -9,3 +9,7 @@ venv/
 uv.lock
 .DS_Store
 dist/
+
+# Local Documentation (untracked)
+/CODEBASE_DOCUMENTATION.md
+/docs/screenshots/
