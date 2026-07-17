@@ -12,18 +12,83 @@ AI systems engineering — the agent logic is intentionally simple.
 ```
 agentic-capstone/
 ├── app/
-│   └── main.py              # FastAPI app + 3 tools
+│   ├── main.py              # FastAPI app + 3 tools + UI routes
+│   └── static/
+│       ├── chat.html         # Interactive chat interface
+│       └── dashboard.html    # Observability dashboard
+├── reasoning_chain/
+│   ├── chain.py              # ReAct loop orchestrator (Gemini)
+│   ├── router.py             # /chain API routes + Redis persistence
+│   ├── schemas.py            # Pydantic data contracts
+│   └── tools.py              # Instrumented tools with failure injection
 ├── tests/
-│   └── test_app.py          # pytest unit tests
+│   ├── test_app.py           # API endpoint tests
+│   └── test_chain.py         # Reasoning chain logic tests
+├── docs/
+│   └── screenshots/          # UI and API screenshots
 ├── .github/workflows/
 │   ├── ci.yml                # lint + test + docker build check
 │   └── cd.yml                # build, push to GHCR, deploy, rollback
 ├── Dockerfile                 # multi-stage, non-root, healthcheck
-├── docker-compose.yml          # app + redis
+├── docker-compose.yml          # local dev: app + redis
+├── docker-compose.prod.yml     # production: GHCR image + redis
 ├── requirements.txt
 ├── requirements-dev.txt
-└── pyproject.toml             # ruff config
+└── pyproject.toml             # ruff + pytest config
 ```
+
+## Run it locally (no Docker)
+
+## Screenshots
+
+### Chat Interface (`/chat`)
+The interactive chat UI supports two orchestration modes: **Direct Agent** (manual
+tool selection) and **Reasoning Chain** (goal-based multi-step reasoning via Gemini).
+
+<p align="center">
+  <img src="docs/screenshots/chat-ui.jpg" alt="Chat UI — Dark glassmorphism interface with sidebar, mode selector, and chat threads" width="800"/>
+</p>
+
+### Reasoning Chain in Action
+A multi-step conversation showing the ReAct loop: the agent decomposes a goal into
+tool calls, executes them, and returns a verified answer with a collapsible
+execution trace timeline.
+
+<p align="center">
+  <img src="docs/screenshots/chat-conversation.jpg" alt="Chat showing weather query with execution trace — weather tool then calculator" width="800"/>
+</p>
+
+### Observability Dashboard (`/dashboard`)
+Real-time metrics (success rate, latency, token usage), a searchable trace history
+table, and a detailed trace inspector panel for debugging agent behavior.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-overview.jpg" alt="Dashboard with metric cards, trace history table, and inspector panel" width="800"/>
+</p>
+
+### Trace Inspector — Execution Path
+Drill into any trace to see the full execution timeline: plan decomposition, each
+tool step with input/output/latency/tokens, API call details, and verification
+outcome.
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-trace-inspector.jpg" alt="Trace inspector showing step-by-step execution path with weather and calculator tools" width="800"/>
+</p>
+
+### API Documentation (`/docs`)
+Auto-generated Swagger UI showing all 14 endpoints across the core service and
+reasoning chain modules.
+
+<p align="center">
+  <img src="docs/screenshots/swagger-api-docs.jpg" alt="FastAPI Swagger UI showing all endpoints grouped by default and chain" width="800"/>
+</p>
+
+### API Endpoints
+Live JSON responses from the health check and root service info endpoints.
+
+<p align="center">
+  <img src="docs/screenshots/api-endpoints.jpg" alt="Health and root endpoint JSON responses" width="800"/>
+</p>
 
 ## Run it locally (no Docker)
 
