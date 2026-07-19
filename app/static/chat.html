@@ -502,7 +502,7 @@
           <div class="message-bubble">
             Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
             <br/><br/>
-            Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to let me decompose, evaluate, and repair a multi-step query automatically!
+            Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to solve a multi-step query iteratively!
           </div>
           <div class="message-meta">Agent • System</div>
         </div>
@@ -588,6 +588,12 @@
       });
     }
 
+    function escapeHtml(value) {
+      const element = document.createElement('div');
+      element.textContent = String(value ?? '');
+      return element.innerHTML;
+    }
+
     // Start a completely new chat session on the server and client
     async function startNewSession() {
       const sessionId = generateUUID();
@@ -633,8 +639,10 @@
       appendMessage('agent', 
         `Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
         <br/><br/>
-        Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to let me decompose, evaluate, and repair a multi-step query automatically!`,
-        'System'
+        Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to solve a multi-step query iteratively!`,
+        'System',
+        '',
+        true
       );
     }
 
@@ -651,6 +659,49 @@
       } else {
         sessions = [];
       }
+    }
+
+    function messageStorageKey(sessionId) {
+      return `agentic_chat_messages:${sessionId}`;
+    }
+
+    function loadMessagesFromLocalStorage(sessionId) {
+      try {
+        const stored = localStorage.getItem(messageStorageKey(sessionId));
+        return stored ? JSON.parse(stored) : [];
+      } catch (err) {
+        console.warn('Failed to load local message history:', err);
+        return [];
+      }
+    }
+
+    function saveMessagesToLocalStorage(sessionId, messages) {
+      try {
+        const compactMessages = messages.slice(-50).map(message => ({
+          sender: message.sender,
+          text: message.text,
+          timestamp: message.timestamp,
+          trace: compactTrace(message.trace)
+        }));
+        localStorage.setItem(messageStorageKey(sessionId), JSON.stringify(compactMessages));
+      } catch (err) {
+        console.warn('Failed to save local message history:', err);
+      }
+    }
+
+    function compactTrace(trace) {
+      if (!trace) return null;
+      return {
+        request_id: trace.request_id,
+        results: trace.results || []
+      };
+    }
+
+    function cacheMessage(sender, text, timestamp, trace = null) {
+      if (!currentSessionId) return;
+      const messages = loadMessagesFromLocalStorage(currentSessionId);
+      messages.push({ sender, text, timestamp, trace: compactTrace(trace) });
+      saveMessagesToLocalStorage(currentSessionId, messages);
     }
 
     // Load sessions list from the server
@@ -699,35 +750,50 @@
       
       chatMessagesContainer.innerHTML = `<div class="loading-container" style="color:var(--text-muted); justify-content:center; padding:40px 0; display:flex; align-items:center; gap:8px;"><span class="spinner"></span> Loading conversation history...</div>`;
       
+      let messages = [];
       try {
         const response = await fetch(`/chain/session/${sessionId}`);
         if (!response.ok) throw new Error("Failed to load session messages");
-        const messages = await response.json();
-        
-        clearChatArea();
-        if (messages.length === 0) {
-          appendSystemGreeting();
-        } else {
-          messages.forEach(msg => {
-            const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : 'N/A';
-            const extraHtml = msg.trace ? buildTraceHtml(msg.trace, `trace-${msg.timestamp}`) : '';
-            appendMessage(msg.sender, msg.text, timeStr, extraHtml);
-          });
+        messages = await response.json();
+        if (messages.length > 0) {
+          saveMessagesToLocalStorage(sessionId, messages);
         }
       } catch (err) {
-        clearChatArea();
-        appendMessage('agent', `<span style="color:var(--danger)">Error loading history: ${err.message}</span>`, 'System');
+        console.warn('Failed to retrieve server message history:', err);
+      }
+
+      if (messages.length === 0) {
+        messages = loadMessagesFromLocalStorage(sessionId);
+      }
+
+      clearChatArea();
+      if (messages.length === 0) {
+        appendSystemGreeting();
+      } else {
+        messages.forEach(msg => {
+          const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : 'N/A';
+          const extraHtml = msg.trace ? buildTraceHtml(msg.trace, `trace-${generateUUID()}`) : '';
+          appendMessage(msg.sender, msg.text, timeStr, extraHtml);
+        });
       }
     }
 
     // Append a message to the chat view
-    function appendMessage(sender, text, timestamp = new Date().toLocaleTimeString(), extraHtml = '') {
+    function appendMessage(
+      sender,
+      text,
+      timestamp = new Date().toLocaleTimeString(),
+      extraHtml = '',
+      allowHtml = false
+    ) {
       const messageDiv = document.createElement('div');
-      messageDiv.className = `message ${sender}`;
+      const safeSender = sender === 'user' ? 'user' : 'agent';
+      const bubbleContent = allowHtml ? text : escapeHtml(text);
+      messageDiv.className = `message ${safeSender}`;
       messageDiv.innerHTML = `
-        <div class="message-bubble">${text}</div>
+        <div class="message-bubble">${bubbleContent}</div>
         ${extraHtml}
-        <div class="message-meta">${sender === 'user' ? 'You' : 'Agent'} • ${timestamp}</div>
+        <div class="message-meta">${safeSender === 'user' ? 'You' : 'Agent'} • ${escapeHtml(timestamp)}</div>
       `;
       chatMessagesContainer.appendChild(messageDiv);
       chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
@@ -745,8 +811,10 @@
           const tool = document.getElementById('tool-select').value;
           const argument = document.getElementById('argument-input').value;
           const goal = `Call ${tool}${argument ? ` with argument: "${argument}"` : ''}`;
+          const userTimestamp = new Date().toISOString();
           
           appendMessage('user', goal);
+          cacheMessage('user', goal, userTimestamp);
           
           // Log manual user message to Redis
           await logManualMessage('user', goal);
@@ -760,8 +828,10 @@
           const data = await response.json();
           if (!response.ok) throw new Error(data.detail || 'Request failed');
           
-          const resultText = `Result: <strong>${data.result}</strong><br/><small style="color:var(--text-muted)">Latency: ${data.latency_ms}ms</small>`;
+          const resultText = `Result: ${data.result} (Latency: ${data.latency_ms}ms)`;
+          const agentTimestamp = new Date().toISOString();
           appendMessage('agent', resultText);
+          cacheMessage('agent', resultText, agentTimestamp);
           
           // Log manual agent response to Redis
           await logManualMessage('agent', resultText);
@@ -770,8 +840,10 @@
           await checkAndUpdateSessionTitle(goal);
         } else {
           const goal = document.getElementById('goal-input').value;
+          const userTimestamp = new Date().toISOString();
           
           appendMessage('user', goal);
+          cacheMessage('user', goal, userTimestamp);
           
           const response = await fetch(`/chain/run?goal=${encodeURIComponent(goal)}&session_id=${currentSessionId}`, {
             method: 'POST'
@@ -785,12 +857,18 @@
           const traceHtml = buildTraceHtml(data, traceId);
           
           appendMessage('agent', data.verify.final_summary, new Date().toLocaleTimeString(), traceHtml);
+          cacheMessage(
+            'agent',
+            data.verify.final_summary,
+            new Date().toISOString(),
+            data
+          );
           
           // If first message in thread, update title
           await checkAndUpdateSessionTitle(goal);
         }
       } catch (error) {
-        appendMessage('agent', `<span style="color:var(--danger)">Error: ${error.message}</span>`);
+        appendMessage('agent', `Error: ${error.message}`);
       } finally {
         sendBtn.disabled = false;
         sendBtn.innerHTML = currentMode === 'agent' ? 'Send' : 'Analyze Goal';
@@ -849,13 +927,13 @@
             <div class="step-marker ${markerClass}">${markerContent}</div>
             <div class="step-content">
               <div class="step-header-row">
-                <span class="step-name">${step.tool}</span>
-                <span class="step-attempts">Attempt ${step.attempt}</span>
+                <span class="step-name">${escapeHtml(step.tool)}</span>
+                <span class="step-attempts">Attempt ${escapeHtml(step.attempt)}</span>
               </div>
               <div class="step-details">
-                <div><strong>Input:</strong> ${JSON.stringify(step.tool_input)}</div>
-                ${step.output ? `<div><strong>Output:</strong> ${step.output}</div>` : ''}
-                ${step.error ? `<div style="color:var(--danger)"><strong>Error:</strong> ${step.error}</div>` : ''}
+                <div><strong>Input:</strong> ${escapeHtml(JSON.stringify(step.tool_input))}</div>
+                ${step.output ? `<div><strong>Output:</strong> ${escapeHtml(step.output)}</div>` : ''}
+                ${step.error ? `<div style="color:var(--danger)"><strong>Error:</strong> ${escapeHtml(step.error)}</div>` : ''}
               </div>
             </div>
           </div>
@@ -869,7 +947,7 @@
               <svg class="chevron" id="${traceId}-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
               <span>Execution Trace (${trace.results.length} steps)</span>
             </div>
-            <span style="font-size: 0.7rem; color: var(--text-muted)">ID: ${trace.request_id.slice(0, 8)}...</span>
+            <span style="font-size: 0.7rem; color: var(--text-muted)">ID: ${escapeHtml(trace.request_id.slice(0, 8))}...</span>
           </div>
           <div class="trace-body collapsed" id="${traceId}-body">
             ${stepsHtml}

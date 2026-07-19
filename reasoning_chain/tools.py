@@ -18,10 +18,21 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# Toggle / tune via env vars in real deployment; hardcoded here for clarity.
-WEATHER_FAILURE_RATE = 0.35
-CALCULATOR_BAD_INPUT_RATE = 0.15
+from .safe_math import evaluate_arithmetic
+
+
+def _failure_rate(name: str) -> float:
+    try:
+        value = float(os.environ.get(name, "0"))
+    except ValueError:
+        return 0.0
+    return min(max(value, 0.0), 1.0)
+
+
+WEATHER_FAILURE_RATE = _failure_rate("WEATHER_FAILURE_RATE")
+CALCULATOR_BAD_INPUT_RATE = _failure_rate("CALCULATOR_BAD_INPUT_RATE")
 
 
 class ToolError(Exception):
@@ -29,23 +40,22 @@ class ToolError(Exception):
 
 
 def calculator(expression: str) -> str:
-    if random.random() < CALCULATOR_BAD_INPUT_RATE:
+    if CALCULATOR_BAD_INPUT_RATE and random.random() < CALCULATOR_BAD_INPUT_RATE:
         # Simulate the LLM having produced something eval can't parse,
         # e.g. "120 * remaining_budget" with an undefined name.
         raise ToolError(f"could not parse expression: {expression!r}")
     try:
-        # NOTE: eval() here is for local learning/demo purposes only.
-        # A real deployment should use a safe expression parser
-        # (e.g. `asteval` or a small hand-written grammar) -- never eval()
-        # untrusted/LLM-generated strings in production.
-        result = eval(expression, {"__builtins__": {}}, {})
-        return str(result)
-    except Exception as e:
-        raise ToolError(f"evaluation failed: {e}")
+        return evaluate_arithmetic(expression)
+    except ValueError as exc:
+        raise ToolError(f"evaluation failed: {exc}") from exc
 
 
 def get_time(timezone_name: str = "UTC") -> str:
-    return datetime.now(timezone.utc).isoformat()
+    try:
+        requested_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ToolError(f"unknown timezone: {timezone_name!r}") from exc
+    return datetime.now(timezone.utc).astimezone(requested_timezone).isoformat()
 
 
 def weather(city: str) -> tuple[str, list[dict]]:
@@ -54,9 +64,9 @@ def weather(city: str) -> tuple[str, list[dict]]:
     if api_key:
         try:
             safe_city = urllib.parse.quote(city)
-            url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
+            url = f"https://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
             api_start = time.perf_counter()
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             try:
                 with urllib.request.urlopen(req, timeout=5) as response:
                     status_code = response.getcode()
@@ -95,13 +105,13 @@ def weather(city: str) -> tuple[str, list[dict]]:
             te.api_calls = api_calls
             raise te
 
-    if random.random() < WEATHER_FAILURE_RATE:
+    if WEATHER_FAILURE_RATE and random.random() < WEATHER_FAILURE_RATE:
         # Simulate a timeout to a third-party weather API.
         time.sleep(0.05)
         raise ToolError(f"weather service timed out for city={city!r}")
     # Mock response -- swap for a real API call in production.
-    condition = random.choice(["clear", "rainy", "cloudy", "windy"])
-    temp_c = random.randint(10, 30)
+    condition = "clear"
+    temp_c = 20
     return f"{city}: {condition}, {temp_c}\u00b0C", api_calls
 
 

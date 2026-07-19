@@ -6,7 +6,6 @@ reasoning chain documented in README.md under /chain.
 """
 
 import json
-import math
 import os
 import time
 import urllib.parse
@@ -19,6 +18,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from reasoning_chain.router import router as chain_router
+from reasoning_chain.safe_math import evaluate_arithmetic
 
 APP_VERSION = "1.0.0"
 
@@ -30,14 +30,7 @@ app.include_router(chain_router, prefix="/chain")
 
 def tool_calculator(expression: str) -> str:
     """Safely evaluate a simple arithmetic expression."""
-    allowed = "0123456789+-*/(). "
-    if not all(ch in allowed for ch in expression):
-        raise ValueError("Expression contains disallowed characters")
-    try:
-        result = eval(expression, {"__builtins__": {}}, {"math": math})
-    except Exception as e:
-        raise ValueError(f"Could not evaluate expression: {e}")
-    return str(result)
+    return evaluate_arithmetic(expression)
 
 
 def tool_get_time() -> str:
@@ -51,8 +44,8 @@ def tool_get_weather(city: str) -> str:
     if api_key:
         try:
             safe_city = urllib.parse.quote(city)
-            url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            url = f"https://api.weatherapi.com/v1/current.json?key={api_key}&q={safe_city}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 loc_name = data["location"]["name"]

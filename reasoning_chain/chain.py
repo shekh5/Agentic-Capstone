@@ -1,13 +1,11 @@
 """
-The orchestration layer: decompose -> execute -> verify -> (repair) -> summarize.
+Reasoning orchestration with a bounded ReAct loop and reusable planning helpers.
 
 Production note:
-This whole file is the "deterministic agent" pattern you already know from
-CI/CD, applied to LLM calls:
-  - decompose_goal()  ~ the pipeline's "plan" stage (like a CI config parse)
-  - execute_plan()    ~ the job runner, with retries + a circuit breaker
-  - verify_and_repair ~ a post-build check that can trigger one more
-                         limited "re-run" instead of looping forever
+The active run_chain() flow asks the model for one action at a time, executes
+that action with bounded retries, and stops after eight actions. The standalone
+decompose_goal() and verify_and_repair() helpers support plan inspection and
+experimentation but are not stages in run_chain().
 No step trusts the previous step's output blindly -- every boundary is a
 Pydantic model (see schemas.py), and every stage is logged with a
 request_id so a failed run can be replayed/debugged like a CI run.
@@ -21,13 +19,28 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from .schemas import ChainTrace, Plan, PlanStep, StepResult, VerifyResult, ModelCall
+from .schemas import ChainTrace, ModelCall, Plan, PlanStep, StepResult, VerifyResult
 from .tools import TOOL_REGISTRY, ToolError
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_STEPS = 6
 MAX_REPAIR_ROUNDS = 1
 MAX_TOOL_RETRIES = 1
+
+TOOL_INSTRUCTIONS = (
+    "Available tools:\n"
+    "- calculator(expression: str) -> tool_input must be a dictionary like "
+    '{"expression": "2 + 2"}\n'
+    "- get_time(timezone_name: str) -> tool_input must be a dictionary like "
+    '{"timezone_name": "UTC"}\n'
+    "- weather(city: str) -> tool_input must be a dictionary like "
+    '{"city": "Delhi"}\n'
+)
+REFERENCE_INSTRUCTIONS = (
+    "If a step depends on a previous result, represent that value using a step "
+    "reference like '[1]', where 1 is the step_id. For example: '([1] * 3) - 5'. "
+    "Do not write text variable names like London_temp.\n"
+)
 
 try:
     from google import genai
@@ -44,8 +57,8 @@ def _get_client():
     if _client is None:
         if genai is None:
             raise RuntimeError(
-                "google-genai is not installed; install dependencies or patch decompose_goal/verify_and_repair "
-                "in tests"
+                "google-genai is not installed; install dependencies or patch "
+                "decompose_goal/verify_and_repair in tests"
             )
         _client = genai.Client()
     return _client
@@ -71,11 +84,8 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
     as structured JSON only -- not prose."""
     system = (
         "You break a user's goal into a short sequence of tool calls. "
-        "Available tools:\n"
-        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
-        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
-        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
-        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. Do not write text variable names like London_temp.\n"
+        f"{TOOL_INSTRUCTIONS}"
+        f"{REFERENCE_INSTRUCTIONS}"
         f"Use at most {MAX_STEPS} steps. "
         "Respond with ONLY a JSON object matching this shape, no prose, "
         "no markdown fences: "
@@ -138,12 +148,17 @@ def _resolve_references(tool_input: dict, results_history: list[StepResult]) -> 
     return resolved
 
 
-def execute_plan(plan: Plan) -> list[StepResult]:
+def execute_plan(
+    plan: Plan,
+    results_history: Optional[list[StepResult]] = None,
+    disabled_tools: Optional[set[str]] = None,
+) -> list[StepResult]:
     """Stage 2: run each step against real tools with retry + circuit
     breaker. A tool that fails twice in a row gets skipped for the rest
     of the run instead of retried forever."""
     results: list[StepResult] = []
-    disabled_tools: set[str] = set()
+    prior_results = results_history or []
+    disabled_tools = disabled_tools if disabled_tools is not None else set()
 
     for step in plan.steps[:MAX_STEPS]:
         if step.tool in disabled_tools:
@@ -158,7 +173,7 @@ def execute_plan(plan: Plan) -> list[StepResult]:
             )
             continue
 
-        resolved_input = _resolve_references(step.tool_input, results)
+        resolved_input = _resolve_references(step.tool_input, prior_results + results)
         fn = TOOL_REGISTRY[step.tool]
         last_error = None
         last_api_calls = []
@@ -195,6 +210,17 @@ def execute_plan(plan: Plan) -> list[StepResult]:
                 step_latency = (time.perf_counter() - step_start) * 1000
                 last_error = f"bad tool_input: {e}"
                 last_api_calls = []
+                results.append(
+                    StepResult(
+                        step_id=step.step_id,
+                        tool=step.tool,
+                        tool_input=resolved_input,
+                        success=False,
+                        error=last_error,
+                        attempt=attempt,
+                        latency_ms=round(step_latency, 2),
+                    )
+                )
                 break
         else:
             results.append(
@@ -224,11 +250,9 @@ def verify_and_repair(
     system = (
         "You check whether tool results satisfy the user's goal. "
         "If something failed or is missing, propose at most 2 repair "
-        "steps using the same tools. Available tools:\n"
-        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
-        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
-        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
-        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. Do not write text variable names like London_temp.\n"
+        "steps using the same tools. "
+        f"{TOOL_INSTRUCTIONS}"
+        f"{REFERENCE_INSTRUCTIONS}"
         "If a repair isn't possible, say so "
         "plainly in final_summary instead of guessing. "
         "Respond with ONLY JSON: {\"satisfied\": bool, \"missing\": "
@@ -269,6 +293,7 @@ def run_chain(goal: str, conversation_context: Optional[str] = None) -> ChainTra
     model_calls = []
     results = []
     plan_steps = []
+    disabled_tools: set[str] = set()
     
     satisfied = False
     final_summary = ""
@@ -277,17 +302,13 @@ def run_chain(goal: str, conversation_context: Optional[str] = None) -> ChainTra
 
     system = (
         "You are an agent solving a goal step-by-step. "
-        "Available tools:\n"
-        "- calculator(expression: str) -> tool_input MUST be a dictionary like {\"expression\": \"2 + 2\"}\n"
-        "- get_time(timezone_name: str) -> tool_input MUST be a dictionary like {\"timezone_name\": \"UTC\"}\n"
-        "- weather(city: str) -> tool_input MUST be a dictionary like {\"city\": \"Delhi\"}\n"
-        "If a step depends on a value returned by a previous step (e.g. using the temperature from step 1 in a calculation), "
-        "represent that value using step reference format like '[1]' where 1 is the step_id. For example: '([1] * 3) - 5'. "
-        "Do not write text variable names like London_temp.\n\n"
+        f"{TOOL_INSTRUCTIONS}"
+        f"{REFERENCE_INSTRUCTIONS}\n"
         "At each step, look at the history of tools executed so far and choose the NEXT action. "
         "Your response MUST be a JSON object containing either:\n"
         "1. A tool action to perform next:\n"
-        "   {\"thought\": \"explain why this step is needed\", \"tool\": \"weather|calculator|get_time\", \"tool_input\": dict}\n"
+        "   {\"thought\": str, \"tool\": \"weather|calculator|get_time\", "
+        "\"tool_input\": dict}\n"
         "2. Or, if the goal is fully achieved, provide the final answer:\n"
         "   {\"satisfied\": true, \"final_summary\": \"explain the final answer here\"}\n"
         "Respond with ONLY the JSON object, no prose, no markdown formatting."
@@ -295,9 +316,11 @@ def run_chain(goal: str, conversation_context: Optional[str] = None) -> ChainTra
 
     if conversation_context:
         system += (
-            f"\n\nHere is the history of the conversation so far in this session:\n{conversation_context}\n\n"
+            "\n\nHere is the history of the conversation so far in this session:\n"
+            f"{conversation_context}\n\n"
             "Use this history to resolve contextual, relative, or follow-up instructions "
-            "(e.g. 'add 5 to the previous output' means finding the numerical result of the previous turn in the chat context "
+            "(e.g. 'add 5 to the previous output' means finding the numerical result "
+            "of the previous turn in the chat context "
             "and planning a calculator step to add 5 to it)."
         )
 
@@ -378,7 +401,11 @@ def run_chain(goal: str, conversation_context: Optional[str] = None) -> ChainTra
         
         # Execute this single step using execute_plan
         single_plan = Plan(goal=goal, steps=[plan_step])
-        step_results = execute_plan(single_plan)
+        step_results = execute_plan(
+            single_plan,
+            results_history=results,
+            disabled_tools=disabled_tools,
+        )
         
         if step_results:
             res = step_results[0]

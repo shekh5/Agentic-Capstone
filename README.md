@@ -1,11 +1,11 @@
 # Agentic Capstone: Tool-Calling Service + Full CI/CD Pipeline
 
-A minimal FastAPI service that simulates an "agent" calling tools
-(calculator, get_time, get_weather), wrapped in a complete
-Git → Docker → GitHub Actions CI/CD pipeline.
+A FastAPI agent service with direct tool execution, a Gemini-powered ReAct loop,
+Redis-backed conversations and traces, browser interfaces, and a complete
+Git → Docker → GitHub Actions → EC2 delivery pipeline.
 
-This project exists to practice the **infrastructure** side of agentic
-AI systems engineering — the agent logic is intentionally simple.
+This project demonstrates both agent orchestration and the infrastructure needed
+to observe, test, package, and deploy it.
 
 ## Project structure
 
@@ -36,8 +36,6 @@ agentic-capstone/
 ├── requirements-dev.txt
 └── pyproject.toml             # ruff + pytest config
 ```
-
-## Run it locally (no Docker)
 
 ## Screenshots
 
@@ -96,6 +94,8 @@ Live JSON responses from the health check and root service info endpoints.
 python -m venv .venv
 source .venv/bin/activate      # on Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
+export GEMINI_API_KEY=your-key       # required for /chain routes
+export WEATHER_API_KEY=your-key      # optional; otherwise deterministic mock weather is used
 uvicorn app.main:app --reload
 ```
 
@@ -121,11 +121,16 @@ docker run -p 8000:8000 agentic-capstone
 docker compose up --build
 ```
 
+Redis uses append-only persistence on the `redis_data` named volume, so sessions
+and traces survive ordinary container recreation. The chat UI also caches the latest
+50 messages per session in browser storage as a fallback. `docker compose down -v`
+intentionally deletes the Redis volume.
+
 ## Run tests
 
 ```bash
 pytest -v
-ruff check app tests
+ruff check app reasoning_chain tests
 ```
 
 ## Setting up the pipeline on GitHub
@@ -171,17 +176,16 @@ ruff check app tests
 ## Where this goes next (once comfortable)
 
 - Swap the mock tools for real ones (weather API, real DB-backed memory)
-- Add the Anthropic API as an actual reasoning/tool-selection layer
-  instead of the client picking the tool directly
-- Add structured logging + tracing for each tool call (important for
-  debugging agent behavior in production)
+- Consolidate the direct and reasoning-chain tool registries
+- Add authentication, rate limiting, and access controls for traces
 - Add a staging environment + manual approval gate before prod deploy
 
 
-# reasoning_chain
+# Reasoning chain
 
-Plan → execute → verify/repair chain, built to drop into your existing
-FastAPI tool-calling service.
+The active orchestrator uses a bounded ReAct loop: Gemini proposes one validated
+tool action, the service executes it, and the updated history is returned to Gemini
+until the goal is satisfied or the eight-step limit is reached.
 
 ## Wire it in
 
@@ -191,39 +195,37 @@ from reasoning_chain.router import router as chain_router
 app.include_router(chain_router, prefix="/chain")
 ```
 
-Copy the `reasoning_chain/` folder next to your existing `app/` (or wherever
-your calculator/get_time/weather tools currently live), then delete
-`tools.py` here and point `chain.py`'s `TOOL_REGISTRY` import at your real
-tools instead — this version's tools are just instrumented copies with
-injectable failure so you can prove the resilience logic works.
+The tool layer uses a bounded arithmetic parser, IANA timezone handling, optional
+WeatherAPI.com integration, retries, and a circuit breaker. Failure injection is
+off by default and can be enabled with `WEATHER_FAILURE_RATE` or
+`CALCULATOR_BAD_INPUT_RATE`, using values between `0` and `1`.
 
 ## Endpoints
 
 - `POST /chain/plan?goal=...` — decomposition only, no tools run. Use this
   first to sanity-check the model's reasoning.
-- `POST /chain/run?goal=...` — full plan → execute → verify → repair loop.
-  Returns the entire trace.
+- `POST /chain/run?goal=...&session_id=...` — run the ReAct loop and return its trace.
+- `GET /chain/traces` — list recent trace summaries.
 - `GET /chain/trace/{request_id}` — replay a past run from Redis.
+- `/chain/session/...` routes — save session metadata and conversation history.
 
 ## Try it locally
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
-uvicorn main:app --reload
+export GEMINI_API_KEY=...
+uvicorn app.main:app --reload
 curl -X POST "http://localhost:8000/chain/plan?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
 curl -X POST "http://localhost:8000/chain/run?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
 ```
 
-Run `/chain/run` a handful of times — the weather tool fails ~35% of the
-time on purpose. Watch the trace: you should see a retry, then either a
-successful recovery or an honest "couldn't confirm weather" in
-`final_summary`, never a hallucinated temperature.
+To demonstrate recovery behavior locally, set `WEATHER_FAILURE_RATE=0.35`.
+Production deployments should leave failure injection unset or explicitly set to `0`.
 
 ## Tests
 
 ```bash
 pip install pytest --break-system-packages
-pytest reasoning_chain/test_chain.py -v
+pytest tests/test_chain.py -v
 ```
 
 All LLM calls are mocked, so this runs in your existing CI (Python
@@ -234,18 +236,14 @@ All LLM calls are mocked, so this runs in your existing CI (Python
 1. **`/chain/plan`** — read the JSON. Does the model's decomposition make
    sense for a goal you didn't anticipate? This is where you'll spend most
    of your debugging time in real agent work.
-2. **Force a failure** — bump `WEATHER_FAILURE_RATE` in `tools.py` to `1.0`
-   temporarily and hit `/chain/run`. Confirm the circuit breaker kicks in
+2. **Force a failure** — run with `WEATHER_FAILURE_RATE=1.0` and hit
+   `/chain/run`. Confirm the circuit breaker kicks in
    and `final_summary` is honest about what's missing, instead of the
    model quietly making up a temperature.
-3. **`repair_rounds` in the trace** — this number should almost always be
-   0 or 1. If you ever see it climbing, that's your signal `MAX_REPAIR_ROUNDS`
-   or your verify prompt needs tightening — same instinct as noticing a CI
-   job that "usually passes on retry" and asking why it's flaky at all.
+3. **Model-call telemetry** — inspect prompts, token usage, tool inputs, outputs,
+   retries, and API latency in `/dashboard`.
 
 ## Next step (Phase 2 memory)
 
-Right now each run is stateless. Once you're ready, use the same Redis
-connection in `router.py` to store `ChainTrace` history keyed by a
-conversation/session id instead of only by `request_id` — that's your
-first real short-term memory system.
+Session context and trace history are stored in Redis. A next memory phase would
+add explicit retention limits, summarization, and user-level isolation.

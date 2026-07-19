@@ -628,21 +628,27 @@
       fetchRecentTraces();
     });
 
+    function escapeHtml(value) {
+      const element = document.createElement('div');
+      element.textContent = String(value ?? '');
+      return element.innerHTML;
+    }
+
     function formatJSON(val) {
       if (val === null || val === undefined) return '';
       if (typeof val === 'object') {
-        return JSON.stringify(val, null, 2);
+        return escapeHtml(JSON.stringify(val, null, 2));
       }
       if (typeof val === 'string') {
         try {
           // Check if it's actually valid JSON string
           const parsed = JSON.parse(val);
-          return JSON.stringify(parsed, null, 2);
+          return escapeHtml(JSON.stringify(parsed, null, 2));
         } catch {
-          return val;
+          return escapeHtml(val);
         }
       }
-      return String(val);
+      return escapeHtml(val);
     }
 
     function copyToClipboardFallback(text) {
@@ -716,7 +722,7 @@
           }
         }
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding: 40px;">Error: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger); padding: 40px;">Error: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
@@ -731,7 +737,7 @@
         renderInspectorHeader();
         renderTabContent();
       } catch (err) {
-        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading shared trace: ${err.message}</div>`;
+        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading shared trace: ${escapeHtml(err.message)}</div>`;
       }
     }
 
@@ -780,12 +786,12 @@
           : `<span class="badge failed">Failed</span>`;
 
         tr.innerHTML = `
-          <td style="max-width: 250px; font-weight: 500; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${trace.goal}</td>
+          <td style="max-width: 250px; font-weight: 500; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(trace.goal)}</td>
           <td>${satisfiedBadge}</td>
-          <td>${trace.step_count} steps</td>
+          <td>${escapeHtml(trace.step_count)} steps</td>
           <td>${Math.round(trace.total_latency_ms)}ms</td>
-          <td>${trace.total_tokens ? trace.total_tokens.toLocaleString() : 0}</td>
-          <td style="color:var(--text-muted)">${dateStr}</td>
+          <td>${escapeHtml(trace.total_tokens ? trace.total_tokens.toLocaleString() : 0)}</td>
+          <td style="color:var(--text-muted)">${escapeHtml(dateStr)}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -815,7 +821,7 @@
         renderInspectorHeader();
         renderTabContent();
       } catch (err) {
-        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading trace: ${err.message}</div>`;
+        content.innerHTML = `<div style="color:var(--danger); padding:20px;">Error loading trace: ${escapeHtml(err.message)}</div>`;
       }
     }
 
@@ -827,8 +833,8 @@
       const compTok = selectedTrace.total_completion_tokens || 0;
       const totalTok = selectedTrace.total_tokens || 0;
       header.innerHTML = `
-        <h2>Inspect: ${selectedTrace.goal.slice(0, 45)}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
-        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${totalTok.toLocaleString()}</strong> (Prompt: ${promptTok} / Output: ${compTok})</p>
+        <h2>Inspect: ${escapeHtml(selectedTrace.goal.slice(0, 45))}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
+        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${escapeHtml(totalTok.toLocaleString())}</strong> (Prompt: ${escapeHtml(promptTok)} / Output: ${escapeHtml(compTok)})</p>
       `;
     }
 
@@ -861,7 +867,7 @@
               </div>
               <div class="node-meta"><strong>Steps:</strong></div>
               <ol style="margin-left: 20px; font-size: 0.8rem; line-height: 1.4;">
-                ${selectedTrace.plan.steps.map(s => `<li><strong>${s.tool}</strong>: ${s.reason}</li>`).join('')}
+                ${selectedTrace.plan.steps.map(s => `<li><strong>${escapeHtml(s.tool)}</strong>: ${escapeHtml(s.reason)}</li>`).join('')}
               </ol>
             </div>
           </div>
@@ -879,13 +885,13 @@
               apiLogsHtml += `
                 <div class="api-call-box">
                   <div class="api-header">
-                    <span>API Call: ${call.method} ${call.status}</span>
-                    <span>${call.latency_ms}ms</span>
+                    <span>API Call: ${escapeHtml(call.method)} ${escapeHtml(call.status)}</span>
+                    <span>${escapeHtml(call.latency_ms)}ms</span>
                   </div>
-                  <div style="font-size:0.75rem; word-break: break-all; color:var(--text-muted)"><strong>URL:</strong> ${call.url}</div>
+                  <div style="font-size:0.75rem; word-break: break-all; color:var(--text-muted)"><strong>URL:</strong> ${escapeHtml(call.url)}</div>
                   <details style="margin-top:6px;">
                     <summary style="font-size:0.7rem; color:var(--accent); cursor:pointer;">Show Response Payload JSON</summary>
-                    <pre style="margin-top:4px; max-height: 150px; overflow-y: auto;">${JSON.stringify(call.response_payload, null, 2)}</pre>
+                    <pre style="margin-top:4px; max-height: 150px; overflow-y: auto;">${formatJSON(call.response_payload)}</pre>
                   </details>
                 </div>
               `;
@@ -897,10 +903,10 @@
               <div class="node-marker ${markerClass}">${markerContent}</div>
               <div class="node-content">
                 <div class="node-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                  <span class="node-title">Step ${step.step_id}: ${step.tool}</span>
+                  <span class="node-title">Step ${escapeHtml(step.step_id)}: ${escapeHtml(step.tool)}</span>
                   <div style="display:flex; gap:8px; align-items:center;">
-                    ${step.total_tokens ? `<span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.65rem; font-weight:600; padding:2px 8px; border-radius:50px; text-transform:none;">Tokens: ${step.total_tokens} (In: ${step.prompt_tokens} / Out: ${step.completion_tokens})</span>` : ''}
-                    <span class="node-latency">${step.latency_ms || 0}ms</span>
+                    ${step.total_tokens ? `<span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.65rem; font-weight:600; padding:2px 8px; border-radius:50px; text-transform:none;">Tokens: ${escapeHtml(step.total_tokens)} (In: ${escapeHtml(step.prompt_tokens)} / Out: ${escapeHtml(step.completion_tokens)})</span>` : ''}
+                    <span class="node-latency">${escapeHtml(step.latency_ms || 0)}ms</span>
                   </div>
                 </div>
                 <div class="node-meta"><strong>Input parameters:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.tool_input)}</pre></div>
@@ -922,9 +928,9 @@
               <div class="node-header">
                 <span class="node-title">Verification Outcome</span>
               </div>
-              <div class="node-meta"><strong>Summary:</strong> ${selectedTrace.verify.final_summary}</div>
-              ${selectedTrace.verify.missing.length > 0 ? `<div class="node-meta" style="color:var(--warning)"><strong>Missing targets:</strong> ${selectedTrace.verify.missing.join(', ')}</div>` : ''}
-              ${selectedTrace.verify.repair_steps.length > 0 ? `<div class="node-meta" style="color:var(--accent)"><strong>Proposed repair:</strong> ${selectedTrace.verify.repair_steps.length} steps</div>` : ''}
+              <div class="node-meta"><strong>Summary:</strong> ${escapeHtml(selectedTrace.verify.final_summary)}</div>
+              ${selectedTrace.verify.missing.length > 0 ? `<div class="node-meta" style="color:var(--warning)"><strong>Missing targets:</strong> ${escapeHtml(selectedTrace.verify.missing.join(', '))}</div>` : ''}
+              ${selectedTrace.verify.repair_steps.length > 0 ? `<div class="node-meta" style="color:var(--accent)"><strong>Proposed repair:</strong> ${escapeHtml(selectedTrace.verify.repair_steps.length)} steps</div>` : ''}
             </div>
           </div>
         `;
@@ -947,8 +953,8 @@
             
             item.innerHTML = `
               <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${call.stage}</span>
-                <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Tokens: ${call.total_tokens || 0} (In: ${call.prompt_tokens || 0} / Out: ${call.completion_tokens || 0})</span>
+                <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${escapeHtml(call.stage)}</span>
+                <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Tokens: ${escapeHtml(call.total_tokens || 0)} (In: ${escapeHtml(call.prompt_tokens || 0)} / Out: ${escapeHtml(call.completion_tokens || 0)})</span>
                 <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
               </div>
               

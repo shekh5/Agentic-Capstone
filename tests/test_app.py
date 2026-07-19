@@ -1,5 +1,6 @@
 import json
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -34,6 +35,20 @@ def test_chat_ui():
     assert "Agentic Capstone" in r.text
 
 
+def test_chat_ui_has_message_history_fallback():
+    r = client.get("/chat")
+    assert "agentic_chat_messages:" in r.text
+    assert "loadMessagesFromLocalStorage" in r.text
+
+
+def test_compose_uses_durable_redis_storage():
+    project_root = Path(__file__).resolve().parents[1]
+    for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):
+        compose = (project_root / compose_name).read_text(encoding="utf-8")
+        assert "redis-server --appendonly yes" in compose
+        assert "redis_data:/data" in compose
+
+
 def test_agent_calculator():
     r = client.post("/agent", json={"tool": "calculator", "argument": "2 + 2"})
     assert r.status_code == 200
@@ -44,6 +59,14 @@ def test_agent_calculator():
 
 def test_agent_calculator_bad_expression():
     r = client.post("/agent", json={"tool": "calculator", "argument": "import os"})
+    assert r.status_code == 400
+
+
+def test_agent_calculator_rejects_python_syntax():
+    r = client.post(
+        "/agent",
+        json={"tool": "calculator", "argument": "().__class__.__base__"},
+    )
     assert r.status_code == 400
 
 
@@ -96,6 +119,34 @@ def test_chain_run_route_is_mounted():
 
     assert r.status_code == 200
     assert r.json()["request_id"] == "req-1"
+
+
+def test_chain_run_persists_session_messages():
+    fake_trace = ChainTrace(
+        request_id="req-session",
+        goal="what time is it",
+        plan=Plan(goal="what time is it", steps=[]),
+        results=[],
+        verify=VerifyResult(satisfied=True, final_summary="done"),
+        repair_rounds=0,
+    )
+    mock_redis = MagicMock()
+    mock_redis.lrange.return_value = []
+
+    with (
+        patch("reasoning_chain.router._redis", mock_redis),
+        patch("reasoning_chain.router.run_chain", return_value=fake_trace),
+    ):
+        r = client.post(
+            "/chain/run",
+            params={"goal": "what time is it", "session_id": "session-1"},
+        )
+
+    assert r.status_code == 200
+    assert mock_redis.rpush.call_count == 2
+    persisted = json.loads(mock_redis.rpush.call_args_list[0].args[1])
+    assert persisted["sender"] == "user"
+    assert persisted["timestamp"].endswith("+00:00")
 
 
 def test_chain_traces_route_is_mounted():

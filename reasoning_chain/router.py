@@ -17,7 +17,7 @@ made it into stdout logs.
 import json
 import logging
 import os
-
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -65,8 +65,7 @@ def plan_only(goal: str):
 
 @router.post("/run", response_model=ChainTrace)
 def run(goal: str, session_id: Optional[str] = None):
-    """Full plan -> execute -> verify -> repair loop using ReAct steps. 
-    Accepts session_id to load conversation history memory."""
+    """Run the bounded ReAct loop with optional conversation memory."""
     context_str = ""
     if session_id and _redis:
         try:
