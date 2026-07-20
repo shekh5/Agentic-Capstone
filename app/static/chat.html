@@ -216,6 +216,11 @@
       border: 1px solid var(--border-color);
     }
 
+    .message-bubble a {
+      color: var(--accent);
+      overflow-wrap: anywhere;
+    }
+
     .message-meta {
       font-size: 0.7rem;
       color: var(--text-muted);
@@ -620,6 +625,21 @@
       return element.innerHTML;
     }
 
+    function renderMessageText(value) {
+      const text = String(value ?? '');
+      const markdownLink = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+      let html = '';
+      let cursor = 0;
+      let match;
+      while ((match = markdownLink.exec(text)) !== null) {
+        html += escapeHtml(text.slice(cursor, match.index));
+        html += `<a href="${escapeHtml(match[2])}" target="_blank" rel="noopener noreferrer">${escapeHtml(match[1])}</a>`;
+        cursor = markdownLink.lastIndex;
+      }
+      html += escapeHtml(text.slice(cursor));
+      return html.replace(/\n/g, '<br>');
+    }
+
     // Start a completely new chat session on the server and client
     async function startNewSession() {
       const sessionId = generateUUID();
@@ -663,7 +683,7 @@
     // Backup greeting fallback
     function appendSystemGreeting() {
       appendMessage('agent', 
-        `Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
+        `Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, fetch weather information, or search the web for current answers with sources.
         <br/><br/>
         Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to solve a multi-step query iteratively!`,
         'System',
@@ -814,7 +834,7 @@
     ) {
       const messageDiv = document.createElement('div');
       const safeSender = sender === 'user' ? 'user' : 'agent';
-      const bubbleContent = allowHtml ? text : escapeHtml(text);
+      const bubbleContent = allowHtml ? text : renderMessageText(text);
       messageDiv.className = `message ${safeSender}`;
       messageDiv.innerHTML = `
         <div class="message-bubble">${bubbleContent}</div>

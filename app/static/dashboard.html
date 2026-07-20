@@ -832,9 +832,10 @@
       const promptTok = selectedTrace.total_prompt_tokens || 0;
       const compTok = selectedTrace.total_completion_tokens || 0;
       const totalTok = selectedTrace.total_tokens || 0;
+      const context = selectedTrace.context_usage || {};
       header.innerHTML = `
         <h2>Inspect: ${escapeHtml(selectedTrace.goal.slice(0, 45))}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
-        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${escapeHtml(totalTok.toLocaleString())}</strong> (Prompt: ${escapeHtml(promptTok)} / Output: ${escapeHtml(compTok)})</p>
+        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${escapeHtml(totalTok.toLocaleString())}</strong> (Prompt: ${escapeHtml(promptTok)} / Output: ${escapeHtml(compTok)}) | Context: <strong>${escapeHtml(context.used_tokens || 0)} / ${escapeHtml(context.budget_tokens || 0)}</strong> (${escapeHtml(context.utilization_percent || 0)}%, compression L${escapeHtml(context.compression_level || 0)}) | Corrections: <strong>${escapeHtml(selectedTrace.total_corrections || 0)}</strong></p>
       `;
     }
 
@@ -882,6 +883,12 @@
           let apiLogsHtml = '';
           if (step.api_calls && step.api_calls.length > 0) {
             step.api_calls.forEach(call => {
+              const sources = call.response_payload && Array.isArray(call.response_payload.sources)
+                ? call.response_payload.sources
+                : [];
+              const sourcesHtml = sources.length > 0
+                ? `<div style="font-size:0.75rem; color:var(--text-muted)"><strong>Sources:</strong><ul style="margin:4px 0 0 18px;">${sources.map(source => `<li><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title)}</a></li>`).join('')}</ul></div>`
+                : '';
               apiLogsHtml += `
                 <div class="api-call-box">
                   <div class="api-header">
@@ -889,6 +896,7 @@
                     <span>${escapeHtml(call.latency_ms)}ms</span>
                   </div>
                   <div style="font-size:0.75rem; word-break: break-all; color:var(--text-muted)"><strong>URL:</strong> ${escapeHtml(call.url)}</div>
+                  ${sourcesHtml}
                   <details style="margin-top:6px;">
                     <summary style="font-size:0.7rem; color:var(--accent); cursor:pointer;">Show Response Payload JSON</summary>
                     <pre style="margin-top:4px; max-height: 150px; overflow-y: auto;">${formatJSON(call.response_payload)}</pre>
@@ -913,6 +921,25 @@
                 ${step.output ? `<div class="node-meta" style="color:var(--text-main)"><strong>Output:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(0,0,0,0.2);">${formatJSON(step.output)}</pre></div>` : ''}
                 ${step.error ? `<div class="node-meta" style="color:var(--danger)"><strong>Error:</strong> <pre style="margin-top:4px; font-size:0.75rem; background:rgba(239,68,68,0.05); border-color:rgba(239,68,68,0.2);">${formatJSON(step.error)}</pre></div>` : ''}
                 ${apiLogsHtml}
+              </div>
+            </div>
+          `;
+        });
+
+        (selectedTrace.corrections || []).forEach(correction => {
+          const correctionClass = correction.successful ? 'success' : 'failed';
+          const correctionMarker = correction.successful ? '↻' : '!';
+          nodesHtml += `
+            <div class="timeline-node">
+              <div class="node-marker ${correctionClass}">${correctionMarker}</div>
+              <div class="node-content">
+                <div class="node-header">
+                  <span class="node-title">Decision correction · Step ${escapeHtml(correction.step_number)} · Attempt ${escapeHtml(correction.attempt)}</span>
+                </div>
+                <div class="node-meta"><strong>Type:</strong> ${escapeHtml(correction.correction_type)}</div>
+                <div class="node-meta"><strong>Validation:</strong> ${escapeHtml(correction.validation_error)}</div>
+                <div class="node-meta"><strong>Result:</strong> ${correction.successful ? 'Corrected successfully' : 'Correction unsuccessful'}</div>
+                ${correction.result_error ? `<div class="node-meta" style="color:var(--danger)"><strong>Result error:</strong> ${escapeHtml(correction.result_error)}</div>` : ''}
               </div>
             </div>
           `;
@@ -950,11 +977,21 @@
           selectedTrace.llm_calls.forEach((call, index) => {
             const item = document.createElement('div');
             item.className = 'log-item';
+            const context = call.context_usage || {};
+            const utilization = Number(context.utilization_percent || 0);
+            const contextColor = utilization >= 90
+              ? 'var(--danger)'
+              : utilization >= 80
+                ? 'var(--warning)'
+                : utilization >= 60
+                  ? '#facc15'
+                  : 'var(--success)';
             
             item.innerHTML = `
               <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${escapeHtml(call.stage)}</span>
                 <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Prompt: ${escapeHtml(call.prompt_version || 'N/A')} · Tokens: ${escapeHtml(call.total_tokens || 0)} (In: ${escapeHtml(call.prompt_tokens || 0)} / Out: ${escapeHtml(call.completion_tokens || 0)}) · Temp: ${escapeHtml(call.temperature ?? 'N/A')}</span>
+                <span class="badge" style="background:rgba(15,23,42,0.5); color:${contextColor}; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Context: ${escapeHtml(context.used_tokens || 0)}/${escapeHtml(context.budget_tokens || 0)} (${escapeHtml(utilization)}%) · L${escapeHtml(context.compression_level || 0)} · ${escapeHtml(context.recent_messages_included || 0)} kept / ${escapeHtml(context.messages_dropped || 0)} dropped</span>
                 <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
               </div>
               

@@ -51,10 +51,26 @@ def test_chat_ui_has_temperature_selector_and_persistence():
     assert "temperature" in r.text
 
 
+def test_chat_ui_renders_grounding_links_safely():
+    r = client.get("/chat")
+    assert "function renderMessageText" in r.text
+    assert 'rel="noopener noreferrer"' in r.text
+
+
+def test_dashboard_displays_web_search_sources():
+    r = client.get("/dashboard")
+    assert "call.response_payload.sources" in r.text
+    assert "source.url" in r.text
+
+
 def test_dashboard_displays_prompt_version_telemetry():
     r = client.get("/dashboard")
     assert r.status_code == 200
     assert "call.prompt_version" in r.text
+    assert "context.utilization_percent" in r.text
+    assert "context.compression_level" in r.text
+    assert "selectedTrace.corrections" in r.text
+    assert "selectedTrace.total_corrections" in r.text
 
 
 def test_compose_uses_durable_redis_storage():
@@ -168,6 +184,14 @@ def test_chain_run_rejects_temperature_outside_user_range():
 
     assert r.status_code == 422
     mock_run.assert_not_called()
+
+
+def test_chain_run_returns_502_for_model_transport_failure():
+    with patch("reasoning_chain.router.run_chain", side_effect=RuntimeError("model unavailable")):
+        r = client.post("/chain/run", params={"goal": "test failure"})
+
+    assert r.status_code == 502
+    assert "model unavailable" in r.json()["detail"]
 
 
 def test_chain_run_persists_session_messages():

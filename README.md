@@ -1,7 +1,8 @@
 # Agentic Capstone: Tool-Calling Service + Full CI/CD Pipeline
 
 A FastAPI agent service with direct tool execution, a Gemini-powered ReAct loop,
-Redis-backed conversations and traces, browser interfaces, and a complete
+Google Search-grounded current answers, Redis-backed conversations and traces,
+browser interfaces, and a complete
 Git → Docker → GitHub Actions → EC2 delivery pipeline.
 
 This project demonstrates both agent orchestration and the infrastructure needed
@@ -12,20 +13,23 @@ to observe, test, package, and deploy it.
 ```
 agentic-capstone/
 ├── app/
-│   ├── main.py              # FastAPI app + 3 tools + UI routes
+│   ├── main.py              # FastAPI app + direct tools + UI routes
 │   └── static/
 │       ├── chat.html         # Interactive chat interface
 │       └── dashboard.html    # Observability dashboard
 ├── reasoning_chain/
 │   ├── chain.py              # ReAct loop orchestrator (Gemini)
+│   ├── context_compression.py # Loss-aware model-context compression
+│   ├── decisions.py          # Strict agent-decision and tool-input validation
 │   ├── prompts.py            # Versioned XML prompts + few-shot examples
 │   ├── router.py             # /chain API routes + Redis persistence
 │   ├── schemas.py            # Pydantic data contracts
-│   └── tools.py              # Instrumented tools with failure injection
+│   └── tools.py              # Local, weather, and grounded web-search tools
 ├── tests/
 │   ├── test_app.py           # API endpoint tests
 │   ├── test_chain.py         # Reasoning chain logic tests
-│   └── test_prompts.py       # Prompt contracts and XML boundary tests
+│   ├── test_prompts.py       # Prompt contracts and XML boundary tests
+│   └── test_self_correction.py # Bounded correction and recovery tests
 ├── docs/
 │   └── screenshots/          # UI and API screenshots
 ├── .github/workflows/
@@ -97,6 +101,7 @@ python -m venv .venv
 source .venv/bin/activate      # on Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 export GEMINI_API_KEY=your-key       # required for /chain routes
+export WEB_SEARCH_MODEL=gemini-3.1-flash-lite # optional; defaults to GEMINI_MODEL
 export REACT_TEMPERATURE=0.1         # optional server default, range 0.0-1.0
 export SUMMARY_TEMPERATURE=0.2       # internal rolling-summary setting
 export WEATHER_API_KEY=your-key      # optional; otherwise deterministic mock weather is used
@@ -139,6 +144,25 @@ Gemini's native roles and removes the oldest context when the configured input b
 reached. System/tool instructions, the current goal, output reserve, and a safety margin
 are accounted for independently. See [docs/context-management.md](docs/context-management.md)
 for the key layout, defaults, and EC2 configuration guidance.
+
+Context selection is priority-aware and adaptive: the latest four messages are high priority,
+older recent turns are medium priority, and rolling memory is already compressed. At 60%, 80%,
+and 90% planned utilization, increasingly strict compression levels apply. Oversized tool output
+is shortened only in the model-facing payload while the full value remains in the trace. Context
+usage, retained/dropped messages, and compression level are visible in each model call.
+
+### Current web-grounded answers
+
+The reasoning chain can select `web_search` for recent, changing, or explicitly web-sourced
+questions. It uses Gemini's native Google Search grounding, so the existing `GEMINI_API_KEY`
+is sufficient; no second search-provider secret is required. Successful search results must
+contain public sources, and the final model answer must preserve at least one exact returned URL.
+The chat safely renders those Markdown links, while the dashboard lists source and usage telemetry.
+
+Grounded search calls may be billable. The tool therefore does not automatically retry a failed
+search; a corrected query must be selected explicitly by the agent. Configure a separate supported
+model with `WEB_SEARCH_MODEL` if needed. See
+[docs/web-search-grounding.md](docs/web-search-grounding.md) for the flow and EC2 setup.
 
 ## Run tests
 
@@ -201,11 +225,18 @@ The active orchestrator uses a bounded ReAct loop: Gemini proposes one validated
 tool action, the service executes it, and the updated history is returned to Gemini
 until the goal is satisfied or the eight-step limit is reached.
 
-The model stages use centralized, versioned XML system prompts and three compact
+The model stages use centralized, versioned XML system prompts and four compact
 few-shot examples. Dynamic goals, summaries, and tool results remain untrusted model
 content and are XML-escaped. ReAct outputs include a brief action-selection `reason`
 instead of requesting detailed hidden chain-of-thought; legacy `thought` responses are
 still accepted. See [docs/prompt-engineering.md](docs/prompt-engineering.md).
+
+ReAct decisions are validated with typed action/final schemas and per-tool input contracts.
+Malformed JSON, unknown tools, invalid arguments, duplicate failed actions, and unsupported
+success claims receive at most two model-output correction attempts. Corrections do not consume
+tool steps, and exhaustion returns a controlled unsatisfied trace. The runtime tool registry has
+no filesystem, shell, Git, or code-editing capability. See
+[docs/agent-self-correction.md](docs/agent-self-correction.md).
 
 ## Wire it in
 
@@ -216,7 +247,7 @@ app.include_router(chain_router, prefix="/chain")
 ```
 
 The tool layer uses a bounded arithmetic parser, IANA timezone handling, optional
-WeatherAPI.com integration, retries, and a circuit breaker. Failure injection is
+WeatherAPI.com integration, Google Search grounding, retries, and a circuit breaker. Failure injection is
 off by default and can be enabled with `WEATHER_FAILURE_RATE` or
 `CALCULATOR_BAD_INPUT_RATE`, using values between `0` and `1`.
 
@@ -234,10 +265,12 @@ off by default and can be enabled with `WEATHER_FAILURE_RATE` or
 
 ```bash
 export GEMINI_API_KEY=...
+export WEB_SEARCH_MODEL=gemini-3.1-flash-lite  # optional
 uvicorn app.main:app --reload
 curl -X POST "http://localhost:8000/chain/plan?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
 curl -X POST "http://localhost:8000/chain/run?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
 curl -X POST "http://localhost:8000/chain/run?goal=explain+the+weather&temperature=0.4"
+curl -X POST "http://localhost:8000/chain/run?goal=what+are+today%27s+top+AI+updates"
 ```
 
 To demonstrate recovery behavior locally, set `WEATHER_FAILURE_RATE=0.35`.

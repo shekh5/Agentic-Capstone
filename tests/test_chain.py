@@ -104,6 +104,34 @@ def test_execute_plan_circuit_breaker_disables_repeated_failures():
     assert "skipped" in results[1].error
 
 
+def test_execute_plan_does_not_automatically_retry_billable_web_search():
+    plan = Plan(
+        goal="latest fact",
+        steps=[
+            PlanStep(
+                step_id=1,
+                tool="web_search",
+                tool_input={"query": "latest fact"},
+                reason="needs current information",
+            )
+        ],
+    )
+    calls = {"count": 0}
+
+    def failed_search(query):
+        calls["count"] += 1
+        raise ToolError(f"search unavailable for {query}")
+
+    with patch.dict(
+        "reasoning_chain.chain.TOOL_REGISTRY", {"web_search": failed_search}
+    ):
+        results = execute_plan(plan)
+
+    assert calls["count"] == 1
+    assert results[0].attempt == 1
+    assert results[0].success is False
+
+
 def test_execute_plan_records_bad_tool_input():
     plan = Plan(
         goal="bad weather input",
@@ -187,7 +215,7 @@ def test_run_chain_applies_and_records_user_temperature():
     assert config.temperature == 0.7
     assert trace.temperature == 0.7
     assert trace.llm_calls[0].temperature == 0.7
-    assert trace.llm_calls[0].prompt_version == "react-v2"
+    assert trace.llm_calls[0].prompt_version == "react-v4"
 
 
 def test_run_chain_records_brief_reason_and_keeps_goal_out_of_system_prompt():
@@ -254,6 +282,42 @@ def test_temperature_environment_value_is_validated():
         assert _temperature_from_env("TEST_TEMPERATURE", 0.1) == 0.0
 
 
+def test_run_chain_compresses_tool_context_but_preserves_full_trace_output():
+    verbose_output = "detail " * 200 + "final value 42"
+    responses = [
+        SimpleNamespace(
+            text=(
+                '{"reason":"Run calculation.","tool":"calculator",'
+                '"tool_input":{"expression":"6 * 7"}}'
+            ),
+            usage_metadata=None,
+        ),
+        SimpleNamespace(
+            text='{"satisfied":true,"final_summary":"42"}',
+            usage_metadata=None,
+        ),
+    ]
+
+    with (
+        patch("reasoning_chain.chain._get_client") as mock_client,
+        patch.dict(
+            "reasoning_chain.chain.TOOL_REGISTRY",
+            {"calculator": lambda expression: verbose_output},
+        ),
+        patch("reasoning_chain.chain.ContextSettings") as mock_settings,
+    ):
+        from reasoning_chain.context import ContextSettings
+
+        mock_settings.return_value = ContextSettings(tool_output_max_tokens=20)
+        mock_client.return_value.models.generate_content.side_effect = responses
+        trace = run_chain("calculate six times seven")
+
+    assert trace.results[0].output == verbose_output
+    assert trace.llm_calls[1].context_usage.tool_results_compressed == 1
+    assert "preserved_final_numeric_value: 42" in trace.llm_calls[1].user_prompt
+    assert trace.context_usage == trace.llm_calls[-1].context_usage
+
+
 def test_run_chain_resolves_references_across_react_steps():
     responses = [
         SimpleNamespace(
@@ -293,7 +357,7 @@ def test_run_chain_resolves_references_across_react_steps():
     assert trace.results[1].output == "44.8"
 
 
-def test_run_chain_preserves_circuit_breaker_across_react_steps():
+def test_run_chain_corrects_duplicate_failed_action_before_reexecution():
     responses = [
         SimpleNamespace(
             text=(
@@ -310,7 +374,10 @@ def test_run_chain_preserves_circuit_breaker_across_react_steps():
             usage_metadata=None,
         ),
         SimpleNamespace(
-            text='{"satisfied":true,"final_summary":"unavailable"}',
+            text=(
+                '{"state":"final","satisfied":false,'
+                '"final_summary":"Weather is unavailable."}'
+            ),
             usage_metadata=None,
         ),
     ]
@@ -331,7 +398,12 @@ def test_run_chain_preserves_circuit_breaker_across_react_steps():
         trace = run_chain("check Delhi weather")
 
     assert calls["count"] == 2
-    assert trace.results[1].error == "skipped: tool disabled after repeated failures"
+    assert len(trace.results) == 1
+    assert trace.results[0].success is False
+    assert trace.verify.satisfied is False
+    assert trace.total_corrections == 1
+    assert trace.corrections[0].correction_type == "duplicate_failed_action"
+    assert trace.corrections[0].successful is True
 
 
 def test_execute_plan_resolves_step_references():

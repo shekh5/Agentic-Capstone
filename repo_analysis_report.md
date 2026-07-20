@@ -1,7 +1,7 @@
 # Repository Analysis Report
 
-**Updated:** 2026-07-18  
-**Repository:** `agentic-capstone`  
+**Updated:** 2026-07-20
+**Repository:** `agentic-capstone`
 **Scope:** Application, reasoning chain, tests, browser interfaces, containers, and CI/CD
 
 ## 1. Executive summary
@@ -9,7 +9,8 @@
 Agentic Capstone is a Python 3.11 FastAPI service that demonstrates two agent patterns:
 
 1. Direct execution of a caller-selected calculator, clock, or weather tool.
-2. A Gemini-powered, step-by-step ReAct loop that selects tools until a goal is satisfied.
+2. A Gemini-powered, step-by-step ReAct loop that selects local or Google Search-grounded tools
+   until a goal is satisfied.
 
 Redis provides conversation and trace persistence. Two static browser interfaces provide chat
 and observability experiences. Docker packages the service, while GitHub Actions tests it,
@@ -37,8 +38,11 @@ GitHub Actions → GHCR → EC2 Docker Compose → FastAPI + Redis
 | `app/static/chat.html` | Direct-agent and reasoning-chain chat with session history |
 | `app/static/dashboard.html` | Trace metrics, execution timeline, prompts, and API telemetry |
 | `reasoning_chain/chain.py` | Gemini client, ReAct orchestration, retries, references, circuit breaker |
+| `reasoning_chain/context.py` | Redis rolling memory, priority selection, and token budgeting |
+| `reasoning_chain/context_compression.py` | Bounded model-facing message and tool-output compression |
+| `reasoning_chain/decisions.py` | Typed agent decisions, tool inputs, and error classification |
 | `reasoning_chain/prompts.py` | Versioned XML prompt contracts and curated few-shot examples |
-| `reasoning_chain/tools.py` | Instrumented calculator, timezone, and weather tools |
+| `reasoning_chain/tools.py` | Instrumented calculator, timezone, weather, and grounded search tools |
 | `reasoning_chain/safe_math.py` | Bounded AST-based arithmetic evaluator |
 | `reasoning_chain/schemas.py` | Pydantic contracts for plans, results, traces, and sessions |
 | `reasoning_chain/router.py` | Chain, session, and trace APIs with Redis persistence |
@@ -59,7 +63,14 @@ context. Users can select a validated ReAct temperature from the chat UI, while 
 retains its separate server-controlled temperature. The effective value is captured in trace
 telemetry. Centralized system prompts use XML sections and few-shot tool examples; dynamic content
 is escaped and kept in untrusted model roles. The model returns a brief auditable action reason
-rather than being asked for detailed hidden chain-of-thought. The service executes at most eight
+rather than being asked for detailed hidden chain-of-thought. Context candidates receive explicit
+high/medium priority and adaptive compression at configurable utilization thresholds. Full tool
+outputs stay in traces while bounded copies are sent back to Gemini, and context usage is recorded
+per model call. Invalid decisions receive at most two bounded output-correction attempts; repeated
+failed actions and unsupported success claims are rejected before execution/completion. Correction
+attempts are recorded in traces and do not consume tool steps. Current-information questions can
+use Gemini's native Google Search grounding. Search output is accepted only with public sources,
+and a satisfied final answer must preserve a returned source URL. The service executes at most eight
 actions. Prior results resolve references such as
 `[1]`, and a tool that fails twice is disabled for the rest of the run. The complete `ChainTrace`
 is persisted separately for 24 hours, and capped session display messages are appended when a
@@ -85,7 +96,7 @@ FastAPI additionally provides its standard OpenAPI and documentation routes.
 
 - Trace documents use `chain_trace:{request_id}` keys with a 24-hour expiry.
 - `chain_traces_list` retains up to 100 recent request IDs.
-- Session metadata and message lists are stored separately and currently have no expiry.
+- Session metadata and message lists are stored separately with configurable count and TTL limits.
 - When Redis is unavailable at import time, the application continues without persistence.
 - Redis uses append-only persistence backed by the `redis_data` named volume.
 - The chat also caches session metadata and the latest 50 messages per session in browser
@@ -105,6 +116,8 @@ FastAPI additionally provides its standard OpenAPI and documentation routes.
 - Arithmetic uses an AST allowlist with limits on expression size, syntax-tree size, exponent
   magnitude, integer size, and finite floating-point results.
 - Weather API calls use HTTPS and redact the API key from trace URLs.
+- Grounded searches validate query length, deduplicate public sources, require final citations,
+  and avoid automatic retries that could duplicate billable calls.
 - Browser interfaces escape user, model, tool, and trace content before inserting dynamic HTML.
 - Pydantic validates plans, tool names, results, and traces at orchestration boundaries.
 - The ReAct loop is bounded, tool retries are bounded, and circuit-breaker state lasts for a run.
@@ -114,12 +127,13 @@ FastAPI additionally provides its standard OpenAPI and documentation routes.
 
 At the time of this report:
 
-- `pytest -q`: 28 tests passed.
+- `pytest -q`: 79 tests passed.
 - `ruff check app reasoning_chain tests`: all checks passed.
 
 Coverage includes core routes, direct tools, malformed expressions, timezone behavior, tool
 retries, circuit breaking, reference resolution, bounded ReAct termination, session persistence,
-trace listing, and mounted chain routes. LLM calls are mocked for deterministic CI.
+context compression, self-correction, grounded search, citation enforcement, trace listing, and
+mounted chain routes. LLM calls are mocked for deterministic CI.
 
 ## 9. Remaining risks and recommended work
 

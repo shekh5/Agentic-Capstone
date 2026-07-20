@@ -11,7 +11,6 @@ Pydantic model (see schemas.py), and every stage is logged with a
 request_id so a failed run can be replayed/debugged like a CI run.
 """
 
-import json
 import os
 import re
 import time
@@ -19,12 +18,26 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from .context import ContextBundle, ContextMessage, build_budgeted_contents, estimate_tokens
+from .context import (
+    ContextBundle,
+    ContextMessage,
+    ContextSettings,
+    estimate_tokens,
+    select_budgeted_contents,
+)
+from .context_compression import compress_step_results
+from .decisions import (
+    DecisionValidationError,
+    action_fingerprint,
+    extract_json,
+    parse_agent_decision,
+)
 from .prompts import (
     DECOMPOSE_PROMPT_VERSION,
     REACT_PROMPT_VERSION,
     SUMMARY_SYSTEM_PROMPT,
     VERIFY_PROMPT_VERSION,
+    build_correction_request,
     build_decompose_system_prompt,
     build_goal_request,
     build_react_request,
@@ -33,15 +46,30 @@ from .prompts import (
     build_verify_request,
     build_verify_system_prompt,
 )
-from .schemas import ChainTrace, ModelCall, Plan, PlanStep, StepResult, VerifyResult
+from .schemas import (
+    ActionDecision,
+    ChainTrace,
+    ContextUsage,
+    CorrectionRecord,
+    CorrectionType,
+    FinalDecision,
+    ModelCall,
+    Plan,
+    PlanStep,
+    StepResult,
+    ToolName,
+    VerifyResult,
+)
 from .tools import TOOL_REGISTRY, ToolError
 
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_STEPS = 6
 MAX_REPAIR_ROUNDS = 1
 MAX_TOOL_RETRIES = 1
+MAX_DECISION_CORRECTIONS = 2
 MIN_TEMPERATURE = 0.0
 MAX_TEMPERATURE = 1.0
+WEB_SOURCE_PATTERN = re.compile(r"\]\((https?://[^)\s]+)\)")
 
 
 def _temperature_from_env(name: str, default: float) -> float:
@@ -113,18 +141,43 @@ def summarize_context(existing_summary: str, messages: list[ContextMessage]) -> 
 
 
 def _extract_json(text: str) -> dict:
-    """LLMs sometimes wrap JSON in prose or code fences even when told not
-    to. Production code defends against that instead of assuming a clean
-    parse -- this is the same instinct as validating CI config before
-    running it."""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text.split("\n", 1)[1] if "\n" in text else text
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError(f"no JSON object found in model output: {text[:200]!r}")
-    return json.loads(text[start : end + 1])
+    """Backward-compatible JSON extraction wrapper for non-ReAct helper stages."""
+    return extract_json(text)
+
+
+def _validate_runtime_decision(
+    decision: ActionDecision | FinalDecision,
+    results: list[StepResult],
+    failed_action_fingerprints: set[str],
+) -> None:
+    if isinstance(decision, ActionDecision):
+        if action_fingerprint(decision) in failed_action_fingerprints:
+            raise DecisionValidationError(
+                CorrectionType.duplicate_failed_action,
+                "The same tool action already failed. Correct its input, choose another "
+                "registered action, or return an honest final response.",
+            )
+        return
+    if decision.satisfied and results and not any(result.success for result in results):
+        raise DecisionValidationError(
+            CorrectionType.unsupported_final_answer,
+            "All executed tools failed, so satisfied=true is not supported by a successful "
+            "tool result.",
+        )
+    web_sources = {
+        url
+        for result in results
+        if result.success and result.tool == ToolName.web_search and result.output
+        for url in WEB_SOURCE_PATTERN.findall(result.output)
+    }
+    if decision.satisfied and web_sources and not any(
+        source in decision.final_summary for source in web_sources
+    ):
+        raise DecisionValidationError(
+            CorrectionType.missing_citations,
+            "The final answer uses a successful web search but does not preserve any returned "
+            "source URL. Add at least one exact source link from the web_search output.",
+        )
 
 
 def decompose_goal(goal: str, model_calls: list = None) -> Plan:
@@ -222,7 +275,10 @@ def execute_plan(
         last_api_calls = []
         step_latency = 0.0
 
-        for attempt in range(1, MAX_TOOL_RETRIES + 2):
+        # A grounded search can be billable. Do not repeat it automatically and surprise the
+        # operator with duplicate calls; the agent may issue a corrected query explicitly.
+        max_attempts = 1 if step.tool == ToolName.web_search else MAX_TOOL_RETRIES + 1
+        for attempt in range(1, max_attempts + 1):
             step_start = time.perf_counter()
             try:
                 res = fn(**resolved_input)
@@ -273,7 +329,7 @@ def execute_plan(
                     tool_input=resolved_input,
                     success=False,
                     error=last_error,
-                    attempt=MAX_TOOL_RETRIES + 1,
+                    attempt=max_attempts,
                     latency_ms=round(step_latency, 2),
                     api_calls=last_api_calls,
                 )
@@ -332,11 +388,15 @@ def run_chain(
     results = []
     plan_steps = []
     disabled_tools: set[str] = set()
-    
+    failed_action_fingerprints: set[str] = set()
+    corrections: list[CorrectionRecord] = []
+
     satisfied = False
     final_summary = ""
+    missing_reason = "Goal not fully met or stopped prematurely"
     step_count = 0
     max_steps = 8
+    context_settings = ContextSettings()
 
     system = build_react_system_prompt()
 
@@ -353,75 +413,121 @@ def run_chain(
             }
             for r in results
         ]
-        current_prompt = build_react_request(goal, steps_taken)
-        contents = build_budgeted_contents(
-            conversation,
-            current_prompt,
-            system,
-            token_counter=_count_tokens,
+        compact_steps, compressed_fields = compress_step_results(
+            steps_taken,
+            max_tokens=context_settings.tool_output_max_tokens,
         )
-        resp = _get_client().models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=1000,
-                temperature=effective_temperature,
-            ),
-        )
-        raw = resp.text
-        
-        p_tok = 0
-        c_tok = 0
-        t_tok = 0
-        if resp.usage_metadata:
-            p_tok = resp.usage_metadata.prompt_token_count or 0
-            c_tok = resp.usage_metadata.candidates_token_count or 0
-            t_tok = resp.usage_metadata.total_token_count or 0
+        base_prompt = build_react_request(goal, compact_steps)
+        correction_prompt = ""
+        active_correction: Optional[CorrectionRecord] = None
+        decision: Optional[ActionDecision | FinalDecision] = None
+        p_tok = c_tok = t_tok = 0
 
-        model_calls.append(
-            ModelCall(
-                stage=f"step_{step_count + 1}",
-                system_prompt=system,
-                user_prompt=current_prompt,
-                raw_response=raw,
-                prompt_tokens=p_tok,
-                completion_tokens=c_tok,
-                total_tokens=t_tok,
-                temperature=effective_temperature,
-                prompt_version=REACT_PROMPT_VERSION,
+        for correction_attempt in range(MAX_DECISION_CORRECTIONS + 1):
+            current_prompt = base_prompt
+            if correction_prompt:
+                current_prompt = f"{base_prompt}\n{correction_prompt}"
+            selection = select_budgeted_contents(
+                conversation,
+                current_prompt,
+                system,
+                settings=context_settings,
+                token_counter=_count_tokens,
             )
-        )
-        
-        data = _extract_json(raw)
-        
-        # Check if the model has finished
-        if data.get("satisfied") is True:
-            satisfied = True
-            final_summary = data.get("final_summary", "Goal satisfied.")
+            context_usage = ContextUsage(
+                **{
+                    **selection.usage.__dict__,
+                    "tool_results_compressed": compressed_fields,
+                }
+            )
+            response = _get_client().models.generate_content(
+                model=MODEL,
+                contents=selection.contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=1000,
+                    temperature=effective_temperature,
+                ),
+            )
+            raw = response.text or ""
+            p_tok = c_tok = t_tok = 0
+            if response.usage_metadata:
+                p_tok = response.usage_metadata.prompt_token_count or 0
+                c_tok = response.usage_metadata.candidates_token_count or 0
+                t_tok = response.usage_metadata.total_token_count or 0
+
+            stage = f"step_{step_count + 1}"
+            if correction_attempt:
+                stage += f"_correction_{correction_attempt}"
+            model_calls.append(
+                ModelCall(
+                    stage=stage,
+                    system_prompt=system,
+                    user_prompt=current_prompt,
+                    raw_response=raw,
+                    prompt_tokens=p_tok,
+                    completion_tokens=c_tok,
+                    total_tokens=t_tok,
+                    temperature=effective_temperature,
+                    prompt_version=REACT_PROMPT_VERSION,
+                    context_usage=context_usage,
+                )
+            )
+
+            try:
+                candidate = parse_agent_decision(raw)
+                _validate_runtime_decision(
+                    candidate,
+                    results,
+                    failed_action_fingerprints,
+                )
+            except DecisionValidationError as error:
+                if active_correction is not None:
+                    active_correction.result_error = error.message
+                if correction_attempt >= MAX_DECISION_CORRECTIONS:
+                    break
+                active_correction = CorrectionRecord(
+                    step_number=step_count + 1,
+                    attempt=correction_attempt + 1,
+                    correction_type=error.correction_type,
+                    validation_error=error.message,
+                )
+                corrections.append(active_correction)
+                correction_prompt = build_correction_request(
+                    raw,
+                    error.correction_type.value,
+                    error.message,
+                )
+                continue
+
+            if active_correction is not None:
+                active_correction.successful = True
+            decision = candidate
             break
-            
-        # Otherwise, parse the next step proposal
-        tool = data.get("tool")
-        tool_input = data.get("tool_input", {})
-        reason = data.get("reason", data.get("thought", ""))
-        
-        if not tool:
-            satisfied = False
-            final_summary = "Agent failed to propose a tool action."
+
+        if decision is None:
+            final_summary = (
+                "The agent could not produce a valid decision after "
+                f"{MAX_DECISION_CORRECTIONS} correction attempts."
+            )
+            missing_reason = "Valid agent decision"
             break
-            
+
+        if isinstance(decision, FinalDecision):
+            satisfied = decision.satisfied
+            final_summary = decision.final_summary
+            if not satisfied:
+                missing_reason = "Agent reported that the goal could not be fully satisfied"
+            break
+
         step_id = step_count + 1
-        
         plan_step = PlanStep(
             step_id=step_id,
-            tool=tool,
-            tool_input=tool_input,
-            reason=reason,
+            tool=decision.tool,
+            tool_input=decision.tool_input,
+            reason=decision.reason,
         )
         plan_steps.append(plan_step)
-        
-        # Execute this single step using execute_plan
         single_plan = Plan(goal=goal, steps=[plan_step])
         step_results = execute_plan(
             single_plan,
@@ -435,7 +541,9 @@ def run_chain(
             res.completion_tokens = c_tok
             res.total_tokens = t_tok
             results.append(res)
-            
+            if not res.success:
+                failed_action_fingerprints.add(action_fingerprint(decision))
+
         step_count += 1
     else:
         satisfied = False
@@ -455,7 +563,7 @@ def run_chain(
         results=results,
         verify=VerifyResult(
             satisfied=satisfied,
-            missing=[] if satisfied else ["Goal not fully met or stopped prematurely"],
+            missing=[] if satisfied else [missing_reason],
             repair_steps=[],
             final_summary=final_summary
         ),
@@ -468,4 +576,7 @@ def run_chain(
         total_completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
         temperature=effective_temperature,
+        context_usage=model_calls[-1].context_usage if model_calls else ContextUsage(),
+        corrections=corrections,
+        total_corrections=len(corrections),
     )

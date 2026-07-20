@@ -33,6 +33,35 @@ prompt. It reserves tokens for model output and a safety margin, always keeps th
 instructions and current request, and removes older conversation memory first. Gemini's
 `count_tokens` API is used when available; a conservative local estimate is the fallback.
 
+## Priority and adaptive compression
+
+Context is selected in priority order while the final Gemini messages remain chronological:
+
+| Priority | Content | Selection behavior |
+| --- | --- | --- |
+| Critical | System/tool prompt and current request | Never removed by context selection |
+| High | Latest four clean conversation messages and compact summary | Preserved after medium items |
+| Medium | Remaining recent conversation messages | Oldest removed first |
+| Excluded | Full traces, API telemetry, and tool logs | Never added to conversation context |
+
+The full candidate context determines an adaptive level:
+
+| Level | Default trigger | Behavior |
+| ---: | ---: | --- |
+| `0` | Below 60% | Summary and up to 16 recent messages |
+| `1` | 60% | Normalize older whitespace and keep up to 12 messages |
+| `2` | 80% | Compress the summary further and keep up to 8 messages |
+| `3` | 90% | Keep the compact summary and latest high-priority messages only |
+
+If the exact token count still exceeds the budget, medium messages are removed first, followed by
+the summary and then the oldest high-priority message. The current request remains present even if
+required content alone exceeds the planned budget; telemetry makes that overage visible.
+
+Tool results receive a separate deterministic limit before being copied into the next model
+request. Compression retains the beginning and end of a verbose value and explicitly preserves
+its final numeric value, which is the value used by step references. The original `StepResult`
+and Redis trace are never mutated.
+
 The rolling summary is sent as untrusted prior conversation content with a `user` role. Recent
 assistant answers use Gemini's `model` role. Conversation content is never appended to the system
 instruction.
@@ -46,6 +75,11 @@ instruction.
 | `CONTEXT_TOKEN_SAFETY_MARGIN` | `1000` | Buffer for tokenizer and prompt variation |
 | `CONTEXT_RECENT_MESSAGES` | `16` | Recent messages kept verbatim after compaction |
 | `CONTEXT_RECENT_HIGH_WATERMARK` | `20` | Message count that triggers summarization |
+| `CONTEXT_HIGH_PRIORITY_MESSAGES` | `4` | Newest messages protected after medium history |
+| `CONTEXT_LIGHT_COMPRESSION_RATIO` | `0.60` | Level-1 utilization threshold |
+| `CONTEXT_STRONG_COMPRESSION_RATIO` | `0.80` | Level-2 utilization threshold |
+| `CONTEXT_CRITICAL_RATIO` | `0.90` | Level-3 utilization threshold |
+| `CONTEXT_TOOL_OUTPUT_MAX_TOKENS` | `2000` | Per-field model-facing tool-output limit |
 | `SESSION_MAX_MESSAGES` | `200` | Maximum UI records retained per session |
 | `SESSION_TTL_SECONDS` | `2592000` | Session/context retention (30 days) |
 | `REACT_TEMPERATURE` | `0.1` | Default ReAct randomness when the user sends no override |
@@ -72,3 +106,7 @@ the parameter use `REACT_TEMPERATURE`.
 The effective value is recorded on the chain trace and each ReAct `ModelCall`, and the dashboard
 shows it beside token usage. The user override never affects rolling-memory summaries, which use
 the separately controlled `SUMMARY_TEMPERATURE` value.
+
+Each model call also records `context_usage`, including budget and used tokens, utilization,
+included/dropped messages, priority counts, summary inclusion, compression level, and compressed
+tool-field count. The chain trace exposes the final call's context usage for quick inspection.

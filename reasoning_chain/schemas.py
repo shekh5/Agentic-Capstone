@@ -11,15 +11,86 @@ propagating three steps downstream where it's much harder to debug.
 """
 
 from enum import Enum
-from typing import Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+BriefText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+]
 
 
 class ToolName(str, Enum):
     calculator = "calculator"
     get_time = "get_time"
     weather = "weather"
+    web_search = "web_search"
+
+
+class ActionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["action"]
+    reason: BriefText
+    tool: ToolName
+    tool_input: dict
+
+
+class FinalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["final"]
+    satisfied: bool
+    final_summary: NonEmptyText
+
+
+class CalculatorInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expression: NonEmptyText
+
+
+class WeatherInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    city: NonEmptyText
+
+
+class GetTimeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timezone_name: NonEmptyText = "UTC"
+
+
+class WebSearchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=2, max_length=500),
+    ]
+
+
+class CorrectionType(str, Enum):
+    empty_response = "empty_response"
+    json_parse_error = "json_parse_error"
+    schema_validation_error = "schema_validation_error"
+    unknown_tool = "unknown_tool"
+    invalid_tool_input = "invalid_tool_input"
+    duplicate_failed_action = "duplicate_failed_action"
+    unsupported_final_answer = "unsupported_final_answer"
+    missing_citations = "missing_citations"
+
+
+class CorrectionRecord(BaseModel):
+    step_number: int
+    attempt: int
+    correction_type: CorrectionType
+    validation_error: str
+    successful: bool = False
+    result_error: Optional[str] = None
 
 
 class PlanStep(BaseModel):
@@ -34,6 +105,20 @@ class Plan(BaseModel):
     steps: list[PlanStep]
 
 
+class ContextUsage(BaseModel):
+    budget_tokens: int = 0
+    used_tokens: int = 0
+    utilization_percent: float = 0.0
+    recent_messages_available: int = 0
+    recent_messages_included: int = 0
+    messages_dropped: int = 0
+    high_priority_included: int = 0
+    medium_priority_included: int = 0
+    summary_included: bool = False
+    compression_level: int = 0
+    tool_results_compressed: int = 0
+
+
 class ModelCall(BaseModel):
     stage: str
     system_prompt: str
@@ -44,6 +129,7 @@ class ModelCall(BaseModel):
     total_tokens: int = 0
     temperature: float = 0.0
     prompt_version: str = ""
+    context_usage: ContextUsage = Field(default_factory=ContextUsage)
 
 
 class StepResult(BaseModel):
@@ -86,6 +172,9 @@ class ChainTrace(BaseModel):
     total_completion_tokens: int = 0
     total_tokens: int = 0
     temperature: float = 0.1
+    context_usage: ContextUsage = Field(default_factory=ContextUsage)
+    corrections: list[CorrectionRecord] = Field(default_factory=list)
+    total_corrections: int = 0
     session_id: Optional[str] = None
 
 

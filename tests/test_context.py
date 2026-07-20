@@ -9,6 +9,7 @@ from reasoning_chain.context import (
     ContextSettings,
     RedisContextStore,
     build_budgeted_contents,
+    select_budgeted_contents,
 )
 
 
@@ -109,7 +110,8 @@ def test_budget_uses_roles_keeps_newest_and_never_puts_history_in_system():
     assert contents[-1]["parts"][0]["text"] == '{"goal":"add five"}'
     assert any(item["role"] == "model" for item in contents)
     assert "old old old" not in json.dumps(contents)
-    assert seen_system == ["trusted system"]
+    assert seen_system
+    assert set(seen_system) == {"trusted system"}
 
 
 def test_summary_is_xml_delimited_and_escaped_as_untrusted_content():
@@ -127,6 +129,55 @@ def test_summary_is_xml_delimited_and_escaped_as_untrusted_content():
     assert root.attrib["trust"] == "untrusted"
     assert root.text.strip() == summary
     assert root.find("rules") is None
+
+
+def test_priority_selection_keeps_latest_high_priority_messages():
+    bundle = ContextBundle(
+        summary="older compressed memory",
+        recent=[
+            ContextMessage(role="user", text=f"message {index}") for index in range(6)
+        ],
+    )
+
+    selection = select_budgeted_contents(
+        bundle,
+        "current request",
+        "trusted system",
+        settings=settings(
+            input_token_budget=450,
+            high_priority_messages=2,
+            recent_messages=4,
+        ),
+        token_counter=lambda contents, system: len(contents) * 100,
+    )
+    serialized = json.dumps(selection.contents)
+
+    assert "message 4" in serialized
+    assert "message 5" in serialized
+    assert "message 0" not in serialized
+    assert selection.usage.high_priority_included == 2
+    assert selection.usage.medium_priority_included == 0
+    assert selection.usage.recent_messages_available == 6
+    assert selection.usage.messages_dropped == 4
+    assert selection.usage.compression_level == 3
+
+
+def test_current_request_is_retained_even_when_it_exceeds_budget():
+    selection = select_budgeted_contents(
+        ContextBundle(
+            summary="summary",
+            recent=[ContextMessage(role="user", text="older message")],
+        ),
+        "mandatory current request",
+        "large trusted system",
+        settings=settings(input_token_budget=150, output_token_reserve=50, token_safety_margin=50),
+        token_counter=lambda contents, system: 1_000,
+    )
+
+    assert len(selection.contents) == 1
+    assert selection.contents[0]["parts"][0]["text"] == "mandatory current request"
+    assert selection.usage.used_tokens == 1_000
+    assert selection.usage.messages_dropped == 1
 
 
 def test_legacy_migration_strips_trace_and_sets_retention():

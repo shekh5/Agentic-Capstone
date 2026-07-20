@@ -5,8 +5,11 @@ import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import IntEnum
 from html import escape
 from typing import Callable, Literal, Optional
+
+from .context_compression import compress_text, normalize_whitespace
 
 try:
     from redis.exceptions import WatchError
@@ -21,6 +24,13 @@ Summarizer = Callable[[str, list["ContextMessage"]], str]
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return min(1.0, max(0.0, float(os.environ.get(name, default))))
     except (TypeError, ValueError):
         return default
 
@@ -42,6 +52,21 @@ class ContextSettings:
     recent_high_watermark: int = field(
         default_factory=lambda: _env_int("CONTEXT_RECENT_HIGH_WATERMARK", 20)
     )
+    high_priority_messages: int = field(
+        default_factory=lambda: _env_int("CONTEXT_HIGH_PRIORITY_MESSAGES", 4)
+    )
+    light_compression_ratio: float = field(
+        default_factory=lambda: _env_float("CONTEXT_LIGHT_COMPRESSION_RATIO", 0.60)
+    )
+    strong_compression_ratio: float = field(
+        default_factory=lambda: _env_float("CONTEXT_STRONG_COMPRESSION_RATIO", 0.80)
+    )
+    critical_compression_ratio: float = field(
+        default_factory=lambda: _env_float("CONTEXT_CRITICAL_RATIO", 0.90)
+    )
+    tool_output_max_tokens: int = field(
+        default_factory=lambda: _env_int("CONTEXT_TOOL_OUTPUT_MAX_TOKENS", 2_000)
+    )
     session_max_messages: int = field(
         default_factory=lambda: _env_int("SESSION_MAX_MESSAGES", 200)
     )
@@ -57,6 +82,41 @@ class ContextSettings:
     @property
     def compaction_threshold(self) -> int:
         return max(self.recent_high_watermark, self.recent_messages)
+
+    @property
+    def compression_thresholds(self) -> tuple[float, float, float]:
+        light = self.light_compression_ratio
+        strong = max(light, self.strong_compression_ratio)
+        critical = max(strong, self.critical_compression_ratio)
+        return light, strong, critical
+
+
+class ContextPriority(IntEnum):
+    LOW = 25
+    MEDIUM = 50
+    HIGH = 75
+    CRITICAL = 100
+
+
+@dataclass(frozen=True)
+class ContextUsageStats:
+    budget_tokens: int
+    used_tokens: int
+    utilization_percent: float
+    recent_messages_available: int
+    recent_messages_included: int
+    messages_dropped: int
+    high_priority_included: int
+    medium_priority_included: int
+    summary_included: bool
+    compression_level: int
+    tool_results_compressed: int = 0
+
+
+@dataclass(frozen=True)
+class ContextSelection:
+    contents: list[dict]
+    usage: ContextUsageStats
 
 
 @dataclass(frozen=True)
@@ -103,6 +163,130 @@ def _content(role: Role, text: str) -> dict:
     return {"role": role, "parts": [{"text": text}]}
 
 
+def _summary_text(summary: str, compression_level: int, budget_tokens: int) -> str:
+    if compression_level >= 2:
+        summary = compress_text(summary, max_tokens=max(128, budget_tokens // 8))
+    return (
+        '<conversation_summary trust="untrusted" priority="high">\n'
+        f"{escape(summary, quote=False)}\n"
+        "</conversation_summary>"
+    )
+
+
+def _compression_level(utilization: float, settings: ContextSettings) -> int:
+    light, strong, critical = settings.compression_thresholds
+    if utilization >= critical:
+        return 3
+    if utilization >= strong:
+        return 2
+    if utilization >= light:
+        return 1
+    return 0
+
+
+def _safe_count(counter: TokenCounter, contents: list[dict], system_instruction: str) -> int:
+    try:
+        count = counter(contents, system_instruction)
+        if isinstance(count, int) and count > 0:
+            return count
+    except Exception:
+        pass
+    return estimate_tokens(contents, system_instruction)
+
+
+def select_budgeted_contents(
+    bundle: Optional[ContextBundle],
+    current_prompt: str,
+    system_instruction: str,
+    settings: Optional[ContextSettings] = None,
+    token_counter: Optional[TokenCounter] = None,
+) -> ContextSelection:
+    """Select context by priority and adapt compression to context-window utilization."""
+    settings = settings or ContextSettings()
+    counter = token_counter or estimate_tokens
+    bundle = bundle or ContextBundle()
+    budget = settings.usable_input_tokens
+    current = _content("user", current_prompt)
+    total_recent_available = len(bundle.recent)
+    available = bundle.recent[-settings.recent_messages :]
+    full_contents = [_content(message.role, message.text) for message in available]
+    if bundle.summary:
+        full_contents.insert(0, _content("user", _summary_text(bundle.summary, 0, budget)))
+    full_contents.append(current)
+    full_tokens = _safe_count(counter, full_contents, system_instruction)
+    level = _compression_level(full_tokens / budget, settings)
+
+    if level == 0:
+        recent_limit = settings.recent_messages
+    elif level == 1:
+        recent_limit = min(settings.recent_messages, 12)
+    elif level == 2:
+        recent_limit = min(settings.recent_messages, 8)
+    else:
+        recent_limit = min(settings.recent_messages, settings.high_priority_messages)
+
+    selected = list(available[-recent_limit:])
+    high_count = min(settings.high_priority_messages, len(selected))
+    priorities = [ContextPriority.MEDIUM] * (len(selected) - high_count)
+    priorities.extend([ContextPriority.HIGH] * high_count)
+    medium_count = priorities.count(ContextPriority.MEDIUM)
+    if level >= 1 and medium_count:
+        selected = [
+            ContextMessage(
+                role=message.role,
+                text=normalize_whitespace(message.text),
+                timestamp=message.timestamp,
+            )
+            if index < medium_count
+            else message
+            for index, message in enumerate(selected)
+        ]
+
+    summary = _summary_text(bundle.summary, level, budget) if bundle.summary else ""
+
+    def assemble() -> list[dict]:
+        contents = [_content(message.role, message.text) for message in selected]
+        if summary:
+            contents.insert(0, _content("user", summary))
+        contents.append(current)
+        return contents
+
+    contents = assemble()
+    used_tokens = _safe_count(counter, contents, system_instruction)
+    while used_tokens > budget and medium_count > 0:
+        selected.pop(0)
+        priorities.pop(0)
+        medium_count -= 1
+        contents = assemble()
+        used_tokens = _safe_count(counter, contents, system_instruction)
+
+    if used_tokens > budget and summary:
+        summary = ""
+        contents = assemble()
+        used_tokens = _safe_count(counter, contents, system_instruction)
+
+    while used_tokens > budget and selected:
+        selected.pop(0)
+        priorities.pop(0)
+        contents = assemble()
+        used_tokens = _safe_count(counter, contents, system_instruction)
+
+    included = len(selected)
+    usage = ContextUsageStats(
+        budget_tokens=budget,
+        used_tokens=used_tokens,
+        utilization_percent=round(used_tokens / budget * 100, 2),
+        recent_messages_available=total_recent_available,
+        recent_messages_included=included,
+        messages_dropped=total_recent_available - included,
+        high_priority_included=priorities.count(ContextPriority.HIGH),
+        medium_priority_included=priorities.count(ContextPriority.MEDIUM),
+        summary_included=bool(summary),
+        compression_level=level,
+    )
+    return ContextSelection(contents=contents, usage=usage)
+
+
 def build_budgeted_contents(
     bundle: Optional[ContextBundle],
     current_prompt: str,
@@ -110,55 +294,14 @@ def build_budgeted_contents(
     settings: Optional[ContextSettings] = None,
     token_counter: Optional[TokenCounter] = None,
 ) -> list[dict]:
-    """Build role-correct Gemini contents while keeping the current request mandatory."""
-    settings = settings or ContextSettings()
-    counter = token_counter or estimate_tokens
-    current = _content("user", current_prompt)
-    if bundle is None:
-        return [current]
-
-    selected: list[ContextMessage] = []
-    candidates = bundle.recent[-settings.recent_messages :]
-    for message in reversed(candidates):
-        trial_messages = list(reversed([message, *selected]))
-        trial = [_content(item.role, item.text) for item in trial_messages] + [current]
-        if estimate_tokens(trial, system_instruction) <= settings.usable_input_tokens:
-            selected.insert(0, message)
-        else:
-            break
-
-    summary_content = None
-    if bundle.summary:
-        summary_text = (
-            '<conversation_summary trust="untrusted">\n'
-            f"{escape(bundle.summary, quote=False)}\n"
-            "</conversation_summary>"
-        )
-        trial = [_content("user", summary_text)]
-        trial.extend(_content(item.role, item.text) for item in selected)
-        trial.append(current)
-        if estimate_tokens(trial, system_instruction) <= settings.usable_input_tokens:
-            summary_content = _content("user", summary_text)
-
-    contents = [_content(item.role, item.text) for item in selected]
-    if summary_content:
-        contents.insert(0, summary_content)
-    contents.append(current)
-
-    try:
-        while (
-            len(contents) > 1
-            and counter(contents, system_instruction) > settings.usable_input_tokens
-        ):
-            if summary_content and contents[0] is summary_content:
-                contents.pop(0)
-                summary_content = None
-            else:
-                contents.pop(0)
-    except Exception:
-        # The local estimate already enforced a conservative limit.
-        pass
-    return contents
+    """Backward-compatible wrapper for callers that need only Gemini contents."""
+    return select_budgeted_contents(
+        bundle,
+        current_prompt,
+        system_instruction,
+        settings=settings,
+        token_counter=token_counter,
+    ).contents
 
 
 class RedisContextStore:
