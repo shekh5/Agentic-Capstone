@@ -48,6 +48,8 @@ instruction.
 | `CONTEXT_RECENT_HIGH_WATERMARK` | `20` | Message count that triggers summarization |
 | `SESSION_MAX_MESSAGES` | `200` | Maximum UI records retained per session |
 | `SESSION_TTL_SECONDS` | `2592000` | Session/context retention (30 days) |
+| `REACT_TEMPERATURE` | `0.1` | Default ReAct randomness when the user sends no override |
+| `SUMMARY_TEMPERATURE` | `0.2` | Internal rolling-summary randomness; not user-controlled |
 
 On EC2, set these in the environment used by Docker Compose. The defaults work without additional
 configuration. After changing a value, recreate the app container so it receives the updated
@@ -58,3 +60,15 @@ docker compose -f docker-compose.prod.yml up -d --force-recreate app
 ```
 
 Do not run `docker compose down -v` unless deleting all Redis-backed sessions is intentional.
+
+## User-selectable ReAct temperature
+
+Reasoning Chain mode offers four presets in the chat input: Precise (`0.0`), Reliable (`0.1`),
+Balanced (`0.4`), and Exploratory (`0.7`). The browser stores the last selection in local storage
+and sends it as the optional `temperature` query parameter on `/chain/run`. FastAPI accepts values
+from `0.0` through `1.0`; invalid or out-of-range input receives a `422` response. Calls that omit
+the parameter use `REACT_TEMPERATURE`.
+
+The effective value is recorded on the chain trace and each ReAct `ModelCall`, and the dashboard
+shows it beside token usage. The user override never affects rolling-memory summaries, which use
+the separately controlled `SUMMARY_TEMPERATURE` value.

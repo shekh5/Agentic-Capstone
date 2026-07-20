@@ -523,6 +523,8 @@
     let currentMode = 'chain'; // default to chain mode
     let currentSessionId = '';
     let sessions = [];
+    const TEMPERATURE_STORAGE_KEY = 'agentic_react_temperature';
+    const SUPPORTED_TEMPERATURES = ['0.0', '0.1', '0.4', '0.7'];
 
     const chatMessagesContainer = document.getElementById('chat-messages-container');
     const historyContainer = document.getElementById('history-container');
@@ -551,12 +553,36 @@
           </button>
         `;
       } else {
+        const selectedTemperature = loadTemperaturePreference();
         row.innerHTML = `
+          <select
+            id="temperature-select"
+            class="select-input"
+            aria-label="Response temperature"
+            title="Lower values are more predictable; higher values are more exploratory"
+            onchange="saveTemperaturePreference(this.value)"
+          >
+            <option value="0.0" ${selectedTemperature === '0.0' ? 'selected' : ''}>Precise · 0.0</option>
+            <option value="0.1" ${selectedTemperature === '0.1' ? 'selected' : ''}>Reliable · 0.1</option>
+            <option value="0.4" ${selectedTemperature === '0.4' ? 'selected' : ''}>Balanced · 0.4</option>
+            <option value="0.7" ${selectedTemperature === '0.7' ? 'selected' : ''}>Exploratory · 0.7</option>
+          </select>
           <input type="text" id="goal-input" class="text-input" placeholder="e.g. Check the weather in Delhi and multiply the temp by 2" required />
           <button type="submit" class="submit-btn" id="send-btn">
             Analyze Goal
           </button>
         `;
+      }
+    }
+
+    function loadTemperaturePreference() {
+      const saved = localStorage.getItem(TEMPERATURE_STORAGE_KEY);
+      return SUPPORTED_TEMPERATURES.includes(saved) ? saved : '0.1';
+    }
+
+    function saveTemperaturePreference(value) {
+      if (SUPPORTED_TEMPERATURES.includes(value)) {
+        localStorage.setItem(TEMPERATURE_STORAGE_KEY, value);
       }
     }
 
@@ -840,12 +866,18 @@
           await checkAndUpdateSessionTitle(goal);
         } else {
           const goal = document.getElementById('goal-input').value;
+          const temperature = document.getElementById('temperature-select').value;
           const userTimestamp = new Date().toISOString();
           
           appendMessage('user', goal);
           cacheMessage('user', goal, userTimestamp);
           
-          const response = await fetch(`/chain/run?goal=${encodeURIComponent(goal)}&session_id=${currentSessionId}`, {
+          const params = new URLSearchParams({
+            goal,
+            session_id: currentSessionId,
+            temperature
+          });
+          const response = await fetch(`/chain/run?${params.toString()}`, {
             method: 'POST'
           });
           

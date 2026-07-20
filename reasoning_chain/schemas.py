@@ -42,6 +42,7 @@ class ModelCall(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    temperature: float = 0.0
 
 
 class StepResult(BaseModel):
@@ -83,6 +84,7 @@ class ChainTrace(BaseModel):
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     total_tokens: int = 0
+    temperature: float = 0.1
     session_id: Optional[str] = None
 
 

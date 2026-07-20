@@ -42,6 +42,15 @@ def test_chat_ui_has_message_history_fallback():
     assert "loadMessagesFromLocalStorage" in r.text
 
 
+def test_chat_ui_has_temperature_selector_and_persistence():
+    r = client.get("/chat")
+    assert 'id="temperature-select"' in r.text
+    assert "Precise · 0.0" in r.text
+    assert "Reliable · 0.1" in r.text
+    assert "agentic_react_temperature" in r.text
+    assert "temperature" in r.text
+
+
 def test_compose_uses_durable_redis_storage():
     project_root = Path(__file__).resolve().parents[1]
     for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):
@@ -120,6 +129,39 @@ def test_chain_run_route_is_mounted():
 
     assert r.status_code == 200
     assert r.json()["request_id"] == "req-1"
+
+
+def test_chain_run_forwards_user_temperature():
+    fake_trace = ChainTrace(
+        request_id="req-temperature",
+        goal="test temperature",
+        plan=Plan(goal="test temperature", steps=[]),
+        results=[],
+        verify=VerifyResult(satisfied=True, final_summary="done"),
+        repair_rounds=0,
+        temperature=0.7,
+    )
+
+    with patch("reasoning_chain.router.run_chain", return_value=fake_trace) as mock_run:
+        r = client.post(
+            "/chain/run",
+            params={"goal": "test temperature", "temperature": 0.7},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["temperature"] == 0.7
+    assert mock_run.call_args.kwargs["temperature"] == 0.7
+
+
+def test_chain_run_rejects_temperature_outside_user_range():
+    with patch("reasoning_chain.router.run_chain") as mock_run:
+        r = client.post(
+            "/chain/run",
+            params={"goal": "test temperature", "temperature": 1.5},
+        )
+
+    assert r.status_code == 422
+    mock_run.assert_not_called()
 
 
 def test_chain_run_persists_session_messages():

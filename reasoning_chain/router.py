@@ -20,7 +20,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from .chain import decompose_goal, run_chain, summarize_context
 from .context import ContextBundle, ContextMessage, ContextSettings, RedisContextStore
@@ -93,12 +93,16 @@ def plan_only(goal: str):
 
 
 @router.post("/run", response_model=ChainTrace)
-def run(goal: str, session_id: Optional[str] = None):
+def run(
+    goal: str,
+    session_id: Optional[str] = None,
+    temperature: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+):
     """Run the bounded ReAct loop with optional conversation memory."""
     conversation = _load_context(session_id) if session_id else ContextBundle()
 
     try:
-        trace = run_chain(goal, conversation=conversation)
+        trace = run_chain(goal, conversation=conversation, temperature=temperature)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"chain failed: {e}") from e
 

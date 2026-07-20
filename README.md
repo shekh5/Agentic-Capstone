@@ -95,6 +95,8 @@ python -m venv .venv
 source .venv/bin/activate      # on Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 export GEMINI_API_KEY=your-key       # required for /chain routes
+export REACT_TEMPERATURE=0.1         # optional server default, range 0.0-1.0
+export SUMMARY_TEMPERATURE=0.2       # internal rolling-summary setting
 export WEATHER_API_KEY=your-key      # optional; otherwise deterministic mock weather is used
 uvicorn app.main:app --reload
 ```
@@ -215,6 +217,7 @@ off by default and can be enabled with `WEATHER_FAILURE_RATE` or
 - `POST /chain/plan?goal=...` — decomposition only, no tools run. Use this
   first to sanity-check the model's reasoning.
 - `POST /chain/run?goal=...&session_id=...` — run the ReAct loop and return its trace.
+  An optional `temperature=0.0..1.0` query parameter overrides the server default for that run.
 - `GET /chain/traces` — list recent trace summaries.
 - `GET /chain/trace/{request_id}` — replay a past run from Redis.
 - `/chain/session/...` routes — save session metadata and conversation history.
@@ -226,6 +229,7 @@ export GEMINI_API_KEY=...
 uvicorn app.main:app --reload
 curl -X POST "http://localhost:8000/chain/plan?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
 curl -X POST "http://localhost:8000/chain/run?goal=what+time+is+it+and+is+it+raining+in+Tokyo"
+curl -X POST "http://localhost:8000/chain/run?goal=explain+the+weather&temperature=0.4"
 ```
 
 To demonstrate recovery behavior locally, set `WEATHER_FAILURE_RATE=0.35`.

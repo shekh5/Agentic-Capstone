@@ -54,7 +54,9 @@ returns `AgentResponse`. It does not call Gemini.
 `POST /chain/run` optionally loads clean role-based session memory from Redis. Gemini receives a
 rolling summary, up to 16 recent `user`/`model` messages, the current goal, and prior tool results
 within a configurable token budget. Full traces and tool telemetry remain outside conversational
-context. The service executes at most eight actions. Prior results resolve references such as
+context. Users can select a validated ReAct temperature from the chat UI, while summary generation
+retains its separate server-controlled temperature. The effective value is captured in trace
+telemetry. The service executes at most eight actions. Prior results resolve references such as
 `[1]`, and a tool that fails twice is disabled for the rest of the run. The complete `ChainTrace`
 is persisted separately for 24 hours, and capped session display messages are appended when a
 `session_id` is supplied.

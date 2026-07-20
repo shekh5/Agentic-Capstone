@@ -16,7 +16,12 @@ from unittest.mock import patch
 
 import pytest
 
-from reasoning_chain.chain import execute_plan, run_chain
+from reasoning_chain.chain import (
+    _temperature_from_env,
+    execute_plan,
+    run_chain,
+    summarize_context,
+)
 from reasoning_chain.context import ContextBundle, ContextMessage
 from reasoning_chain.schemas import Plan, PlanStep, StepResult
 from reasoning_chain.tools import ToolError, calculator, get_time
@@ -166,6 +171,60 @@ def test_run_chain_sends_conversation_with_user_and_model_roles():
     assert roles[-3:] == ["user", "model", "user"]
     assert "The result is 10" not in system
     assert "add 5 to that" in contents[-1]["parts"][0]["text"]
+
+
+def test_run_chain_applies_and_records_user_temperature():
+    from unittest.mock import MagicMock
+
+    mock_resp = MagicMock()
+    mock_resp.text = '{"satisfied": true, "final_summary": "done"}'
+
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.return_value = mock_resp
+        trace = run_chain("temperature test", temperature=0.7)
+
+    config = mock_client.return_value.models.generate_content.call_args.kwargs["config"]
+    assert config.temperature == 0.7
+    assert trace.temperature == 0.7
+    assert trace.llm_calls[0].temperature == 0.7
+
+
+def test_run_chain_defensively_clamps_temperature():
+    from unittest.mock import MagicMock
+
+    mock_resp = MagicMock()
+    mock_resp.text = '{"satisfied": true, "final_summary": "done"}'
+
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.return_value = mock_resp
+        trace = run_chain("temperature test", temperature=5.0)
+
+    assert trace.temperature == 1.0
+
+
+def test_summary_uses_internal_temperature():
+    response = SimpleNamespace(text="Compact summary")
+    messages = [ContextMessage(role="user", text="Remember 42")]
+
+    with (
+        patch("reasoning_chain.chain._get_client") as mock_client,
+        patch("reasoning_chain.chain.SUMMARY_TEMPERATURE", 0.2),
+    ):
+        mock_client.return_value.models.generate_content.return_value = response
+        summary = summarize_context("", messages)
+
+    config = mock_client.return_value.models.generate_content.call_args.kwargs["config"]
+    assert summary == "Compact summary"
+    assert config.temperature == 0.2
+
+
+def test_temperature_environment_value_is_validated():
+    with patch.dict("os.environ", {"TEST_TEMPERATURE": "invalid"}):
+        assert _temperature_from_env("TEST_TEMPERATURE", 0.1) == 0.1
+    with patch.dict("os.environ", {"TEST_TEMPERATURE": "5"}):
+        assert _temperature_from_env("TEST_TEMPERATURE", 0.1) == 1.0
+    with patch.dict("os.environ", {"TEST_TEMPERATURE": "-1"}):
+        assert _temperature_from_env("TEST_TEMPERATURE", 0.1) == 0.0
 
 
 def test_run_chain_resolves_references_across_react_steps():

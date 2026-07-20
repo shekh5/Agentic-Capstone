@@ -27,6 +27,21 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_STEPS = 6
 MAX_REPAIR_ROUNDS = 1
 MAX_TOOL_RETRIES = 1
+MIN_TEMPERATURE = 0.0
+MAX_TEMPERATURE = 1.0
+
+
+def _temperature_from_env(name: str, default: float) -> float:
+    """Read a temperature without allowing bad deployment config to break startup."""
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return max(MIN_TEMPERATURE, min(value, MAX_TEMPERATURE))
+
+
+REACT_TEMPERATURE = _temperature_from_env("REACT_TEMPERATURE", 0.1)
+SUMMARY_TEMPERATURE = _temperature_from_env("SUMMARY_TEMPERATURE", 0.2)
 
 TOOL_INSTRUCTIONS = (
     "Available tools:\n"
@@ -101,6 +116,7 @@ def summarize_context(existing_summary: str, messages: list[ContextMessage]) -> 
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=600,
+            temperature=SUMMARY_TEMPERATURE,
         ),
     )
     return (response.text or "").strip()
@@ -140,6 +156,7 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=1000,
+            temperature=REACT_TEMPERATURE,
         ),
     )
     raw = resp.text
@@ -160,6 +177,7 @@ def decompose_goal(goal: str, model_calls: list = None) -> Plan:
                 prompt_tokens=p_tok,
                 completion_tokens=c_tok,
                 total_tokens=t_tok,
+                temperature=REACT_TEMPERATURE,
             )
         )
     data = _extract_json(raw)
@@ -311,6 +329,7 @@ def verify_and_repair(
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=1000,
+            temperature=REACT_TEMPERATURE,
         ),
     )
     raw = resp.text
@@ -321,14 +340,21 @@ def verify_and_repair(
                 system_prompt=system,
                 user_prompt=json.dumps(payload),
                 raw_response=raw,
+                temperature=REACT_TEMPERATURE,
             )
         )
     data = _extract_json(raw)
     return VerifyResult.model_validate(data)
 
 
-def run_chain(goal: str, conversation: Optional[ContextBundle] = None) -> ChainTrace:
+def run_chain(
+    goal: str,
+    conversation: Optional[ContextBundle] = None,
+    temperature: Optional[float] = None,
+) -> ChainTrace:
     """The full orchestrator using a step-by-step ReAct loop."""
+    effective_temperature = REACT_TEMPERATURE if temperature is None else temperature
+    effective_temperature = max(MIN_TEMPERATURE, min(effective_temperature, MAX_TEMPERATURE))
     start_time = datetime.now(timezone.utc).isoformat()
     chain_start = time.perf_counter()
     request_id = str(uuid.uuid4())
@@ -391,6 +417,7 @@ def run_chain(goal: str, conversation: Optional[ContextBundle] = None) -> ChainT
             config=types.GenerateContentConfig(
                 system_instruction=system,
                 max_output_tokens=1000,
+                temperature=effective_temperature,
             ),
         )
         raw = resp.text
@@ -412,6 +439,7 @@ def run_chain(goal: str, conversation: Optional[ContextBundle] = None) -> ChainT
                 prompt_tokens=p_tok,
                 completion_tokens=c_tok,
                 total_tokens=t_tok,
+                temperature=effective_temperature,
             )
         )
         
@@ -489,4 +517,5 @@ def run_chain(goal: str, conversation: Optional[ContextBundle] = None) -> ChainT
         total_prompt_tokens=total_prompt_tokens,
         total_completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
+        temperature=effective_temperature,
     )
