@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from reasoning_chain.chain import execute_plan, run_chain
+from reasoning_chain.context import ContextBundle, ContextMessage
 from reasoning_chain.schemas import Plan, PlanStep, StepResult
 from reasoning_chain.tools import ToolError, calculator, get_time
 
@@ -139,6 +140,32 @@ def test_run_chain_stops_immediately_when_satisfied():
     assert len(trace.results) == 0
     assert trace.verify.satisfied is True
     assert trace.verify.final_summary == "Finished goal."
+
+
+def test_run_chain_sends_conversation_with_user_and_model_roles():
+    from unittest.mock import MagicMock
+
+    mock_resp = MagicMock()
+    mock_resp.text = '{"satisfied": true, "final_summary": "15"}'
+    conversation = ContextBundle(
+        summary="Earlier calculation result was 10.",
+        recent=[
+            ContextMessage(role="user", text="Calculate 5 + 5"),
+            ContextMessage(role="model", text="The result is 10."),
+        ],
+    )
+
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.return_value = mock_resp
+        run_chain("add 5 to that", conversation=conversation)
+
+    call = mock_client.return_value.models.generate_content.call_args
+    contents = call.kwargs["contents"]
+    roles = [item["role"] for item in contents]
+    system = call.kwargs["config"].system_instruction
+    assert roles[-3:] == ["user", "model", "user"]
+    assert "The result is 10" not in system
+    assert "add 5 to that" in contents[-1]["parts"][0]["text"]
 
 
 def test_run_chain_resolves_references_across_react_steps():

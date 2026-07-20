@@ -22,11 +22,13 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from .chain import decompose_goal, run_chain
+from .chain import decompose_goal, run_chain, summarize_context
+from .context import ContextBundle, ContextMessage, ContextSettings, RedisContextStore
 from .schemas import ChainTrace, Plan, SessionMessage, SessionMetadata
 
 logger = logging.getLogger("reasoning_chain")
 router = APIRouter()
+context_settings = ContextSettings()
 
 try:
     import redis
@@ -53,6 +55,33 @@ def _log_trace(trace: ChainTrace) -> None:
         logger.warning(f"failed to persist trace {trace.request_id}: {e}")
 
 
+def _context_store() -> Optional[RedisContextStore]:
+    return RedisContextStore(_redis, context_settings) if _redis is not None else None
+
+
+def _load_context(session_id: str) -> ContextBundle:
+    store = _context_store()
+    if store is None:
+        return ContextBundle()
+    try:
+        context = store.load(session_id)
+        if len(context.recent) > context_settings.compaction_threshold:
+            store.compact(session_id, summarize_context)
+            context = store.load(session_id)
+        return context
+    except Exception as e:
+        logger.warning(f"failed to load session context: {e}")
+        return ContextBundle()
+
+
+def _compact_context(store: RedisContextStore, session_id: str) -> None:
+    try:
+        store.compact(session_id, summarize_context)
+    except Exception as e:
+        # A failed summary must never fail the user's request or delete source messages.
+        logger.warning(f"failed to compact session context: {e}")
+
+
 @router.post("/plan", response_model=Plan)
 def plan_only(goal: str):
     """Returns the decomposition only -- no tools executed. Use this to
@@ -66,18 +95,10 @@ def plan_only(goal: str):
 @router.post("/run", response_model=ChainTrace)
 def run(goal: str, session_id: Optional[str] = None):
     """Run the bounded ReAct loop with optional conversation memory."""
-    context_str = ""
-    if session_id and _redis:
-        try:
-            raw_msgs = _redis.lrange(f"session:{session_id}:messages", 0, -1)
-            for raw in raw_msgs:
-                msg = json.loads(raw)
-                context_str += f"[{msg['sender'].capitalize()}]: {msg['text']}\n"
-        except Exception as e:
-            logger.warning(f"failed to load session context: {e}")
+    conversation = _load_context(session_id) if session_id else ContextBundle()
 
     try:
-        trace = run_chain(goal, conversation_context=context_str if context_str else None)
+        trace = run_chain(goal, conversation=conversation)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"chain failed: {e}") from e
 
@@ -88,19 +109,33 @@ def run(goal: str, session_id: Optional[str] = None):
 
     if session_id and _redis:
         try:
+            timestamp = datetime.now(timezone.utc).isoformat()
             user_msg = {
                 "sender": "user",
                 "text": goal,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": timestamp,
             }
             agent_msg = {
                 "sender": "agent",
                 "text": trace.verify.final_summary,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "trace": trace.model_dump()
+                "trace": trace.model_dump(),
             }
-            _redis.rpush(f"session:{session_id}:messages", json.dumps(user_msg))
-            _redis.rpush(f"session:{session_id}:messages", json.dumps(agent_msg))
+            store = RedisContextStore(_redis, context_settings)
+            store.append_display(session_id, user_msg, agent_msg)
+            store.append(
+                session_id,
+                ContextMessage(role="user", text=goal, timestamp=timestamp),
+            )
+            store.append(
+                session_id,
+                ContextMessage(
+                    role="model",
+                    text=trace.verify.final_summary,
+                    timestamp=agent_msg["timestamp"],
+                ),
+            )
+            _compact_context(store, session_id)
         except Exception as e:
             logger.warning(f"failed to append session messages: {e}")
 
@@ -131,7 +166,11 @@ def update_session_metadata(session_id: str, meta: SessionMetadata):
     if _redis is None:
         return {"status": "error", "message": "Redis storage is not configured"}
     try:
-        _redis.set(f"session:{session_id}:metadata", meta.model_dump_json())
+        _redis.set(
+            f"session:{session_id}:metadata",
+            meta.model_dump_json(),
+            ex=context_settings.session_ttl_seconds,
+        )
         session_ids = _redis.lrange("chain_sessions_list", 0, -1)
         if session_id not in session_ids:
             _redis.lpush("chain_sessions_list", session_id)
@@ -161,7 +200,12 @@ def append_session_message(session_id: str, message: SessionMessage):
     if _redis is None:
         return {"status": "error", "message": "Redis storage is not configured"}
     try:
-        _redis.rpush(f"session:{session_id}:messages", message.model_dump_json())
+        store = RedisContextStore(_redis, context_settings)
+        store.append_display(session_id, message.model_dump())
+        clean = ContextMessage.from_raw(message.model_dump())
+        if clean:
+            store.append(session_id, clean)
+            _compact_context(store, session_id)
         return {"status": "ok"}
     except Exception as e:
         logger.warning(f"failed to append session message: {e}")

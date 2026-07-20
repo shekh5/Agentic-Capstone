@@ -51,11 +51,13 @@ returns `AgentResponse`. It does not call Gemini.
 
 ### Reasoning-chain call
 
-`POST /chain/run` optionally loads session messages from Redis. Gemini receives the goal and
-prior tool results, then proposes either one validated tool action or a final answer. The service
-executes at most eight actions. Prior results resolve references such as `[1]`, and a tool that
-fails twice is disabled for the rest of the run. The complete `ChainTrace` is persisted for 24
-hours, and session messages are appended when a `session_id` is supplied.
+`POST /chain/run` optionally loads clean role-based session memory from Redis. Gemini receives a
+rolling summary, up to 16 recent `user`/`model` messages, the current goal, and prior tool results
+within a configurable token budget. Full traces and tool telemetry remain outside conversational
+context. The service executes at most eight actions. Prior results resolve references such as
+`[1]`, and a tool that fails twice is disabled for the rest of the run. The complete `ChainTrace`
+is persisted separately for 24 hours, and capped session display messages are appended when a
+`session_id` is supplied.
 
 ### Observability
 
@@ -120,7 +122,7 @@ trace listing, and mounted chain routes. LLM calls are mocked for deterministic 
 3. Avoid recording sensitive user content or full external API payloads without a retention and
    redaction policy.
 4. Move Redis connection management into FastAPI lifespan handling and add reconnection logic.
-5. Add expiry, ownership, and message-count limits to sessions.
+5. Add session ownership; expiry and display message-count limits are now configurable.
 6. Consolidate the duplicated direct and reasoning-chain tool implementations.
 7. Move blocking Gemini and HTTP work off synchronous request handlers or use async clients.
 8. Add browser-level tests for the chat and dashboard escaping and interaction paths.

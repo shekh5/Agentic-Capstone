@@ -126,6 +126,16 @@ and traces survive ordinary container recreation. The chat UI also caches the la
 50 messages per session in browser storage as a fallback. `docker compose down -v`
 intentionally deletes the Redis volume.
 
+### Conversation context management
+
+The model does not receive the full UI history or execution traces. Each session keeps
+three separate Redis records: capped display messages, clean recent `user`/`model`
+messages, and a rolling summary of older turns. The ReAct loop sends this memory with
+Gemini's native roles and removes the oldest context when the configured input budget is
+reached. System/tool instructions, the current goal, output reserve, and a safety margin
+are accounted for independently. See [docs/context-management.md](docs/context-management.md)
+for the key layout, defaults, and EC2 configuration guidance.
+
 ## Run tests
 
 ```bash

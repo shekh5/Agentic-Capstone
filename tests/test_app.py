@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from reasoning_chain.context import ContextBundle
 from reasoning_chain.schemas import ChainTrace, Plan, PlanStep, VerifyResult
 
 client = TestClient(app)
@@ -131,10 +132,12 @@ def test_chain_run_persists_session_messages():
         repair_rounds=0,
     )
     mock_redis = MagicMock()
-    mock_redis.lrange.return_value = []
+    mock_store = MagicMock()
+    mock_store.load.return_value = ContextBundle()
 
     with (
         patch("reasoning_chain.router._redis", mock_redis),
+        patch("reasoning_chain.router.RedisContextStore", return_value=mock_store),
         patch("reasoning_chain.router.run_chain", return_value=fake_trace),
     ):
         r = client.post(
@@ -143,10 +146,12 @@ def test_chain_run_persists_session_messages():
         )
 
     assert r.status_code == 200
-    assert mock_redis.rpush.call_count == 2
-    persisted = json.loads(mock_redis.rpush.call_args_list[0].args[1])
-    assert persisted["sender"] == "user"
-    assert persisted["timestamp"].endswith("+00:00")
+    display_records = mock_store.append_display.call_args.args[1:]
+    assert display_records[0]["sender"] == "user"
+    assert display_records[0]["timestamp"].endswith("+00:00")
+    clean_messages = [call.args[1] for call in mock_store.append.call_args_list]
+    assert [message.role for message in clean_messages] == ["user", "model"]
+    assert all(not hasattr(message, "trace") for message in clean_messages)
 
 
 def test_chain_traces_route_is_mounted():

@@ -11,6 +11,13 @@ services:
       - WEATHER_API_KEY
       - WEATHER_FAILURE_RATE
       - CALCULATOR_BAD_INPUT_RATE
+      - CONTEXT_INPUT_TOKEN_BUDGET
+      - CONTEXT_OUTPUT_TOKEN_RESERVE
+      - CONTEXT_TOKEN_SAFETY_MARGIN
+      - CONTEXT_RECENT_MESSAGES
+      - CONTEXT_RECENT_HIGH_WATERMARK
+      - SESSION_MAX_MESSAGES
+      - SESSION_TTL_SECONDS
     depends_on:
       redis:
         condition: service_healthy
