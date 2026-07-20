@@ -43,6 +43,7 @@ class ModelCall(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     temperature: float = 0.0
+    prompt_version: str = ""
 
 
 class StepResult(BaseModel):

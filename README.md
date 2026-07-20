@@ -18,12 +18,14 @@ agentic-capstone/
 │       └── dashboard.html    # Observability dashboard
 ├── reasoning_chain/
 │   ├── chain.py              # ReAct loop orchestrator (Gemini)
+│   ├── prompts.py            # Versioned XML prompts + few-shot examples
 │   ├── router.py             # /chain API routes + Redis persistence
 │   ├── schemas.py            # Pydantic data contracts
 │   └── tools.py              # Instrumented tools with failure injection
 ├── tests/
 │   ├── test_app.py           # API endpoint tests
-│   └── test_chain.py         # Reasoning chain logic tests
+│   ├── test_chain.py         # Reasoning chain logic tests
+│   └── test_prompts.py       # Prompt contracts and XML boundary tests
 ├── docs/
 │   └── screenshots/          # UI and API screenshots
 ├── .github/workflows/
@@ -198,6 +200,12 @@ ruff check app reasoning_chain tests
 The active orchestrator uses a bounded ReAct loop: Gemini proposes one validated
 tool action, the service executes it, and the updated history is returned to Gemini
 until the goal is satisfied or the eight-step limit is reached.
+
+The model stages use centralized, versioned XML system prompts and three compact
+few-shot examples. Dynamic goals, summaries, and tool results remain untrusted model
+content and are XML-escaped. ReAct outputs include a brief action-selection `reason`
+instead of requesting detailed hidden chain-of-thought; legacy `thought` responses are
+still accepted. See [docs/prompt-engineering.md](docs/prompt-engineering.md).
 
 ## Wire it in
 

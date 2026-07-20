@@ -37,6 +37,7 @@ GitHub Actions → GHCR → EC2 Docker Compose → FastAPI + Redis
 | `app/static/chat.html` | Direct-agent and reasoning-chain chat with session history |
 | `app/static/dashboard.html` | Trace metrics, execution timeline, prompts, and API telemetry |
 | `reasoning_chain/chain.py` | Gemini client, ReAct orchestration, retries, references, circuit breaker |
+| `reasoning_chain/prompts.py` | Versioned XML prompt contracts and curated few-shot examples |
 | `reasoning_chain/tools.py` | Instrumented calculator, timezone, and weather tools |
 | `reasoning_chain/safe_math.py` | Bounded AST-based arithmetic evaluator |
 | `reasoning_chain/schemas.py` | Pydantic contracts for plans, results, traces, and sessions |
@@ -56,7 +57,10 @@ rolling summary, up to 16 recent `user`/`model` messages, the current goal, and 
 within a configurable token budget. Full traces and tool telemetry remain outside conversational
 context. Users can select a validated ReAct temperature from the chat UI, while summary generation
 retains its separate server-controlled temperature. The effective value is captured in trace
-telemetry. The service executes at most eight actions. Prior results resolve references such as
+telemetry. Centralized system prompts use XML sections and few-shot tool examples; dynamic content
+is escaped and kept in untrusted model roles. The model returns a brief auditable action reason
+rather than being asked for detailed hidden chain-of-thought. The service executes at most eight
+actions. Prior results resolve references such as
 `[1]`, and a tool that fails twice is disabled for the rest of the run. The complete `ChainTrace`
 is persisted separately for 24 hours, and capped session display messages are appended when a
 `session_id` is supplied.

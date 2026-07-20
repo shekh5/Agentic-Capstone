@@ -51,6 +51,12 @@ def test_chat_ui_has_temperature_selector_and_persistence():
     assert "temperature" in r.text
 
 
+def test_dashboard_displays_prompt_version_telemetry():
+    r = client.get("/dashboard")
+    assert r.status_code == 200
+    assert "call.prompt_version" in r.text
+
+
 def test_compose_uses_durable_redis_storage():
     project_root = Path(__file__).resolve().parents[1]
     for compose_name in ("docker-compose.yml", "docker-compose.prod.yml"):

@@ -954,7 +954,7 @@
             item.innerHTML = `
               <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${escapeHtml(call.stage)}</span>
-                <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Tokens: ${escapeHtml(call.total_tokens || 0)} (In: ${escapeHtml(call.prompt_tokens || 0)} / Out: ${escapeHtml(call.completion_tokens || 0)}) · Temp: ${escapeHtml(call.temperature ?? 'N/A')}</span>
+                <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Prompt: ${escapeHtml(call.prompt_version || 'N/A')} · Tokens: ${escapeHtml(call.total_tokens || 0)} (In: ${escapeHtml(call.prompt_tokens || 0)} / Out: ${escapeHtml(call.completion_tokens || 0)}) · Temp: ${escapeHtml(call.temperature ?? 'N/A')}</span>
                 <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
               </div>
               
