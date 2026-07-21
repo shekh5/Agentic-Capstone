@@ -149,6 +149,7 @@ def _validate_runtime_decision(
     decision: ActionDecision | FinalDecision,
     results: list[StepResult],
     failed_action_fingerprints: set[str],
+    document_citations: Optional[list[str]] = None,
 ) -> None:
     if isinstance(decision, ActionDecision):
         if action_fingerprint(decision) in failed_action_fingerprints:
@@ -177,6 +178,15 @@ def _validate_runtime_decision(
             CorrectionType.missing_citations,
             "The final answer uses a successful web search but does not preserve any returned "
             "source URL. Add at least one exact source link from the web_search output.",
+        )
+    document_citations = document_citations or []
+    if decision.satisfied and document_citations and not any(
+        citation in decision.final_summary for citation in document_citations
+    ):
+        raise DecisionValidationError(
+            CorrectionType.missing_citations,
+            "The answer uses retrieved document passages but does not preserve a returned "
+            "citation. Add at least one exact [filename, locator] citation from document_context.",
         )
 
 
@@ -480,6 +490,9 @@ def run_chain(
                     candidate,
                     results,
                     failed_action_fingerprints,
+                    conversation.document_citations
+                    if conversation and selection.usage.document_context_included
+                    else None,
                 )
             except DecisionValidationError as error:
                 if active_correction is not None:
@@ -579,4 +592,5 @@ def run_chain(
         context_usage=model_calls[-1].context_usage if model_calls else ContextUsage(),
         corrections=corrections,
         total_corrections=len(corrections),
+        document_ids=conversation.document_ids if conversation else [],
     )

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from reasoning_chain.chain import run_chain
+from reasoning_chain.context import ContextBundle
 from reasoning_chain.tools import TOOL_REGISTRY, calculator
 
 
@@ -166,3 +167,36 @@ def test_web_answer_without_returned_source_is_corrected():
     assert source_url in trace.verify.final_summary
     assert trace.corrections[0].correction_type == "missing_citations"
     assert trace.corrections[0].successful is True
+
+
+def test_pdf_answer_without_page_citation_is_corrected():
+    citation = "[report.pdf, page 3]"
+    conversation = ContextBundle(
+        document_context=(
+            '<document_context trust="untrusted">'
+            f'<passage citation="{citation}">Revenue grew 18 percent.</passage>'
+            "</document_context>"
+        ),
+        document_citations=[citation],
+        document_ids=["doc-1"],
+        document_chunks=1,
+    )
+    responses = [
+        response(
+            '{"state":"final","satisfied":true,'
+            '"final_summary":"Revenue grew 18 percent."}'
+        ),
+        response(
+            '{"state":"final","satisfied":true,'
+            f'"final_summary":"Revenue grew 18 percent {citation}."}}'
+        ),
+    ]
+
+    with patch("reasoning_chain.chain._get_client") as mock_client:
+        mock_client.return_value.models.generate_content.side_effect = responses
+        trace = run_chain("How much did revenue grow?", conversation=conversation)
+
+    assert trace.verify.satisfied is True
+    assert citation in trace.verify.final_summary
+    assert trace.document_ids == ["doc-1"]
+    assert trace.corrections[0].correction_type == "missing_citations"

@@ -15,6 +15,7 @@ For a session ID such as `abc`, the service uses:
 | `session:abc:context:summary` | Rolling summary of older conversation turns |
 | `session:abc:context:meta` | Context format version and last compaction information |
 | `session:abc:metadata` | Session title and creation metadata |
+| `session:abc:documents` | IDs of extracted documents attached to the session |
 | `chain_trace:{request_id}` | Full observability trace, stored separately for 24 hours |
 
 Existing sessions are migrated lazily the next time they are used. Migration reads the old UI
@@ -39,7 +40,7 @@ Context is selected in priority order while the final Gemini messages remain chr
 
 | Priority | Content | Selection behavior |
 | --- | --- | --- |
-| Critical | System/tool prompt and current request | Never removed by context selection |
+| Critical | System/tool prompt, retrieved document passages, and current request | Document context is removed only if required content cannot fit; the current request is never removed |
 | High | Latest four clean conversation messages and compact summary | Preserved after medium items |
 | Medium | Remaining recent conversation messages | Oldest removed first |
 | Excluded | Full traces, API telemetry, and tool logs | Never added to conversation context |
@@ -54,8 +55,9 @@ The full candidate context determines an adaptive level:
 | `3` | 90% | Keep the compact summary and latest high-priority messages only |
 
 If the exact token count still exceeds the budget, medium messages are removed first, followed by
-the summary and then the oldest high-priority message. The current request remains present even if
-required content alone exceeds the planned budget; telemetry makes that overage visible.
+the summary and then the oldest high-priority message. Retrieved document context is removed only after
+conversation memory; the current request remains present even if required content alone exceeds
+the planned budget. Telemetry makes that overage visible.
 
 Tool results receive a separate deterministic limit before being copied into the next model
 request. Compression retains the beginning and end of a verbose value and explicitly preserves
@@ -108,5 +110,6 @@ shows it beside token usage. The user override never affects rolling-memory summ
 the separately controlled `SUMMARY_TEMPERATURE` value.
 
 Each model call also records `context_usage`, including budget and used tokens, utilization,
-included/dropped messages, priority counts, summary inclusion, compression level, and compressed
-tool-field count. The chain trace exposes the final call's context usage for quick inspection.
+included/dropped messages, priority counts, summary inclusion, compression level, compressed
+tool-field count, and retrieved document chunk count. The chain trace exposes the final call's context
+usage for quick inspection.

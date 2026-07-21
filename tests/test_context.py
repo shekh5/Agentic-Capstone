@@ -180,6 +180,33 @@ def test_current_request_is_retained_even_when_it_exceeds_budget():
     assert selection.usage.messages_dropped == 1
 
 
+def test_retrieved_document_context_is_high_priority_and_has_telemetry():
+    bundle = ContextBundle(
+        recent=[ContextMessage(role="user", text="older chat")],
+        document_context=(
+            '<document_context trust="untrusted">'
+            '<passage citation="[report.pdf, page 2]">Revenue grew.</passage>'
+            "</document_context>"
+        ),
+        document_citations=["[report.pdf, page 2]"],
+        document_ids=["doc-1"],
+        document_chunks=1,
+    )
+
+    selection = select_budgeted_contents(
+        bundle,
+        "Explain the revenue",
+        "trusted system",
+        settings=settings(input_token_budget=500),
+    )
+    serialized = json.dumps(selection.contents)
+
+    assert "Revenue grew" in serialized
+    assert selection.contents[-1]["parts"][0]["text"] == "Explain the revenue"
+    assert selection.usage.document_context_included is True
+    assert selection.usage.document_chunks_included == 1
+
+
 def test_legacy_migration_strips_trace_and_sets_retention():
     redis = FakeRedis()
     display_key = "session:s1:messages"

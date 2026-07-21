@@ -117,6 +117,8 @@ class ContextUsage(BaseModel):
     summary_included: bool = False
     compression_level: int = 0
     tool_results_compressed: int = 0
+    document_context_included: bool = False
+    document_chunks_included: int = 0
 
 
 class ModelCall(BaseModel):
@@ -176,6 +178,7 @@ class ChainTrace(BaseModel):
     corrections: list[CorrectionRecord] = Field(default_factory=list)
     total_corrections: int = 0
     session_id: Optional[str] = None
+    document_ids: list[str] = Field(default_factory=list)
 
 
 class SessionMessage(BaseModel):

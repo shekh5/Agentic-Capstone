@@ -111,6 +111,8 @@ class ContextUsageStats:
     summary_included: bool
     compression_level: int
     tool_results_compressed: int = 0
+    document_context_included: bool = False
+    document_chunks_included: int = 0
 
 
 @dataclass(frozen=True)
@@ -151,6 +153,10 @@ class ContextMessage:
 class ContextBundle:
     summary: str = ""
     recent: list[ContextMessage] = field(default_factory=list)
+    document_context: str = ""
+    document_citations: list[str] = field(default_factory=list)
+    document_ids: list[str] = field(default_factory=list)
+    document_chunks: int = 0
 
 
 def estimate_tokens(contents: list[dict], system_instruction: str) -> int:
@@ -212,6 +218,8 @@ def select_budgeted_contents(
     full_contents = [_content(message.role, message.text) for message in available]
     if bundle.summary:
         full_contents.insert(0, _content("user", _summary_text(bundle.summary, 0, budget)))
+    if bundle.document_context:
+        full_contents.append(_content("user", bundle.document_context))
     full_contents.append(current)
     full_tokens = _safe_count(counter, full_contents, system_instruction)
     level = _compression_level(full_tokens / budget, settings)
@@ -243,11 +251,14 @@ def select_budgeted_contents(
         ]
 
     summary = _summary_text(bundle.summary, level, budget) if bundle.summary else ""
+    document_context = bundle.document_context
 
     def assemble() -> list[dict]:
         contents = [_content(message.role, message.text) for message in selected]
         if summary:
             contents.insert(0, _content("user", summary))
+        if document_context:
+            contents.append(_content("user", document_context))
         contents.append(current)
         return contents
 
@@ -271,6 +282,11 @@ def select_budgeted_contents(
         contents = assemble()
         used_tokens = _safe_count(counter, contents, system_instruction)
 
+    if used_tokens > budget and document_context:
+        document_context = ""
+        contents = assemble()
+        used_tokens = _safe_count(counter, contents, system_instruction)
+
     included = len(selected)
     usage = ContextUsageStats(
         budget_tokens=budget,
@@ -283,6 +299,8 @@ def select_budgeted_contents(
         medium_priority_included=priorities.count(ContextPriority.MEDIUM),
         summary_included=bool(summary),
         compression_level=level,
+        document_context_included=bool(document_context),
+        document_chunks_included=bundle.document_chunks if document_context else 0,
     )
     return ContextSelection(contents=contents, usage=usage)
 

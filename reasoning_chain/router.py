@@ -20,15 +20,23 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from .chain import decompose_goal, run_chain, summarize_context
 from .context import ContextBundle, ContextMessage, ContextSettings, RedisContextStore
+from .documents import (
+    DocumentError,
+    DocumentMetadata,
+    DocumentSettings,
+    RedisDocumentStore,
+)
 from .schemas import ChainTrace, Plan, SessionMessage, SessionMetadata
 
 logger = logging.getLogger("reasoning_chain")
 router = APIRouter()
 context_settings = ContextSettings()
+document_settings = DocumentSettings()
 
 try:
     import redis
@@ -59,6 +67,10 @@ def _context_store() -> Optional[RedisContextStore]:
     return RedisContextStore(_redis, context_settings) if _redis is not None else None
 
 
+def _document_store() -> Optional[RedisDocumentStore]:
+    return RedisDocumentStore(_redis, document_settings) if _redis is not None else None
+
+
 def _load_context(session_id: str) -> ContextBundle:
     store = _context_store()
     if store is None:
@@ -72,6 +84,27 @@ def _load_context(session_id: str) -> ContextBundle:
     except Exception as e:
         logger.warning(f"failed to load session context: {e}")
         return ContextBundle()
+
+
+def _attach_document_context(
+    session_id: str, goal: str, conversation: ContextBundle
+) -> ContextBundle:
+    store = _document_store()
+    if store is None:
+        return conversation
+    try:
+        retrieval = store.retrieve(session_id, goal)
+    except Exception as exc:
+        logger.warning(f"failed to retrieve session documents: {exc}")
+        return conversation
+    return ContextBundle(
+        summary=conversation.summary,
+        recent=conversation.recent,
+        document_context=retrieval.context,
+        document_citations=retrieval.citations,
+        document_ids=retrieval.document_ids,
+        document_chunks=retrieval.chunk_count,
+    )
 
 
 def _compact_context(store: RedisContextStore, session_id: str) -> None:
@@ -100,6 +133,8 @@ def run(
 ):
     """Run the bounded ReAct loop with optional conversation memory."""
     conversation = _load_context(session_id) if session_id else ContextBundle()
+    if session_id:
+        conversation = _attach_document_context(session_id, goal, conversation)
 
     try:
         trace = run_chain(goal, conversation=conversation, temperature=temperature)
@@ -144,6 +179,60 @@ def run(
             logger.warning(f"failed to append session messages: {e}")
 
     return trace
+
+
+@router.post(
+    "/session/{session_id}/documents",
+    response_model=DocumentMetadata,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document(session_id: str, file: UploadFile = File(...)):
+    """Extract a supported document and attach its searchable chunks to a session."""
+    store = _document_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="document storage is not configured")
+    try:
+        data = await file.read(document_settings.max_file_bytes + 1)
+        if len(data) > document_settings.max_file_bytes:
+            limit_mb = document_settings.max_file_bytes // (1024 * 1024)
+            raise DocumentError(f"document exceeds the {limit_mb} MB limit")
+        return await run_in_threadpool(store.ingest, session_id, file.filename, data)
+    except DocumentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
+@router.get(
+    "/session/{session_id}/documents",
+    response_model=list[DocumentMetadata],
+)
+def list_session_documents(session_id: str):
+    """List documents currently available to one chat session."""
+    store = _document_store()
+    if store is None:
+        return []
+    try:
+        return store.list(session_id)
+    except Exception as exc:
+        logger.warning(f"failed to list session documents: {exc}")
+        return []
+
+
+@router.delete("/session/{session_id}/documents/{document_id}")
+def delete_session_document(session_id: str, document_id: str):
+    """Delete extracted document text and detach it from the session."""
+    store = _document_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="document storage is not configured")
+    try:
+        if not store.delete(session_id, document_id):
+            raise HTTPException(status_code=404, detail="document not found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="failed to delete document") from exc
+    return {"status": "deleted", "document_id": document_id}
 
 
 @router.get("/sessions")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agentic Capstone - Observability Dashboard</title>
+  <title>SuperAI - Observability</title>
   <!-- Google Fonts: Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -531,7 +531,7 @@
 
   <header>
     <div>
-      <h1>Agent Observability Dashboard</h1>
+      <h1>SuperAI Observability</h1>
       <p>Analyze execution paths, model call prompts, and tool API performance log history</p>
     </div>
     <button class="refresh-btn" onclick="fetchRecentTraces()">
@@ -835,7 +835,7 @@
       const context = selectedTrace.context_usage || {};
       header.innerHTML = `
         <h2>Inspect: ${escapeHtml(selectedTrace.goal.slice(0, 45))}${selectedTrace.goal.length > 45 ? '...' : ''}</h2>
-        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${escapeHtml(totalTok.toLocaleString())}</strong> (Prompt: ${escapeHtml(promptTok)} / Output: ${escapeHtml(compTok)}) | Context: <strong>${escapeHtml(context.used_tokens || 0)} / ${escapeHtml(context.budget_tokens || 0)}</strong> (${escapeHtml(context.utilization_percent || 0)}%, compression L${escapeHtml(context.compression_level || 0)}) | Corrections: <strong>${escapeHtml(selectedTrace.total_corrections || 0)}</strong></p>
+        <p>Goal satisfied: <strong style="color:${selectedTrace.verify.satisfied ? 'var(--success)' : 'var(--danger)'}">${selectedTrace.verify.satisfied ? 'YES' : 'NO'}</strong> | Latency: <strong>${Math.round(selectedTrace.total_latency_ms)}ms</strong> | Tokens: <strong>${escapeHtml(totalTok.toLocaleString())}</strong> (Prompt: ${escapeHtml(promptTok)} / Output: ${escapeHtml(compTok)}) | Context: <strong>${escapeHtml(context.used_tokens || 0)} / ${escapeHtml(context.budget_tokens || 0)}</strong> (${escapeHtml(context.utilization_percent || 0)}%, compression L${escapeHtml(context.compression_level || 0)}) | Document chunks: <strong>${escapeHtml(context.document_chunks_included || 0)}</strong> | Corrections: <strong>${escapeHtml(selectedTrace.total_corrections || 0)}</strong></p>
       `;
     }
 
@@ -991,7 +991,7 @@
               <div class="node-header" style="border-bottom:1px solid var(--border-color); padding-bottom:6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <span class="node-title" style="text-transform:uppercase; color:var(--accent);">LLM Call: ${escapeHtml(call.stage)}</span>
                 <span class="badge success" style="background:rgba(99,102,241,0.15); color:var(--accent); font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Prompt: ${escapeHtml(call.prompt_version || 'N/A')} · Tokens: ${escapeHtml(call.total_tokens || 0)} (In: ${escapeHtml(call.prompt_tokens || 0)} / Out: ${escapeHtml(call.completion_tokens || 0)}) · Temp: ${escapeHtml(call.temperature ?? 'N/A')}</span>
-                <span class="badge" style="background:rgba(15,23,42,0.5); color:${contextColor}; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Context: ${escapeHtml(context.used_tokens || 0)}/${escapeHtml(context.budget_tokens || 0)} (${escapeHtml(utilization)}%) · L${escapeHtml(context.compression_level || 0)} · ${escapeHtml(context.recent_messages_included || 0)} kept / ${escapeHtml(context.messages_dropped || 0)} dropped</span>
+                <span class="badge" style="background:rgba(15,23,42,0.5); color:${contextColor}; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:50px;">Context: ${escapeHtml(context.used_tokens || 0)}/${escapeHtml(context.budget_tokens || 0)} (${escapeHtml(utilization)}%) · L${escapeHtml(context.compression_level || 0)} · ${escapeHtml(context.recent_messages_included || 0)} kept / ${escapeHtml(context.messages_dropped || 0)} dropped · Document chunks ${escapeHtml(context.document_chunks_included || 0)}</span>
                 <span style="font-size:0.75rem; color:var(--text-muted)">Sequence #${index + 1}</span>
               </div>
               

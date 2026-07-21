@@ -22,7 +22,7 @@ from reasoning_chain.safe_math import evaluate_arithmetic
 
 APP_VERSION = "1.0.0"
 
-app = FastAPI(title="Agentic Capstone Service", version=APP_VERSION)
+app = FastAPI(title="SuperAI Service", version=APP_VERSION)
 app.include_router(chain_router, prefix="/chain")
 
 
@@ -94,7 +94,7 @@ def health():
 
 @app.get("/")
 def root():
-    return {"message": "Agentic Capstone Service is running", "tools": list(TOOLS.keys())}
+    return {"message": "SuperAI Service is running", "tools": list(TOOLS.keys())}
 
 
 @app.get("/version")

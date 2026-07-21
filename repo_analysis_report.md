@@ -6,13 +6,13 @@
 
 ## 1. Executive summary
 
-Agentic Capstone is a Python 3.11 FastAPI service that demonstrates two agent patterns:
+SuperAI is a Python 3.11 FastAPI service that demonstrates two agent patterns:
 
 1. Direct execution of a caller-selected calculator, clock, or weather tool.
 2. A Gemini-powered, step-by-step ReAct loop that selects local or Google Search-grounded tools
    until a goal is satisfied.
 
-Redis provides conversation and trace persistence. Two static browser interfaces provide chat
+Redis provides conversation, extracted multi-format document chunks, and trace persistence. Two static browser interfaces provide chat
 and observability experiences. Docker packages the service, while GitHub Actions tests it,
 publishes an image to GHCR, deploys it to EC2, checks health, and attempts rollback on failure.
 
@@ -41,6 +41,7 @@ GitHub Actions → GHCR → EC2 Docker Compose → FastAPI + Redis
 | `reasoning_chain/context.py` | Redis rolling memory, priority selection, and token budgeting |
 | `reasoning_chain/context_compression.py` | Bounded model-facing message and tool-output compression |
 | `reasoning_chain/decisions.py` | Typed agent decisions, tool inputs, and error classification |
+| `reasoning_chain/documents.py` | Multi-format validation, extraction, chunk persistence, and retrieval |
 | `reasoning_chain/prompts.py` | Versioned XML prompt contracts and curated few-shot examples |
 | `reasoning_chain/tools.py` | Instrumented calculator, timezone, weather, and grounded search tools |
 | `reasoning_chain/safe_math.py` | Bounded AST-based arithmetic evaluator |
@@ -76,6 +77,12 @@ actions. Prior results resolve references such as
 is persisted separately for 24 hours, and capped session display messages are appended when a
 `session_id` is supplied.
 
+PDF, DOCX, text, Markdown, CSV, TSV, XLSX, and PPTX files can be attached to a session.
+Locator-preserving chunks are stored in Redis and ranked locally for later questions, avoiding a
+separate embedding quota. Retrieved passages enter the existing token budget as critical untrusted
+context, and document answers require exact filename/location citations. Image-only content fails
+explicitly until OCR is configured.
+
 ### Observability
 
 `GET /chain/traces` returns recent trace summaries. `GET /chain/trace/{request_id}` returns the
@@ -84,11 +91,12 @@ metadata, latency, and the final outcome. The dashboard calculates aggregate met
 
 ## 4. API surface
 
-The service exposes 14 application operations:
+The service exposes 17 application operations:
 
 - Core: `/`, `/health`, `/version`, `/chat`, `/dashboard`, and `/agent`.
 - Chain: `/chain/plan`, `/chain/run`, `/chain/traces`, `/chain/trace/{request_id}`,
-  `/chain/sessions`, and three session metadata/message operations.
+  `/chain/sessions`, three session metadata/message operations, and three session-document
+  upload/list/delete operations.
 
 FastAPI additionally provides its standard OpenAPI and documentation routes.
 
@@ -127,13 +135,14 @@ FastAPI additionally provides its standard OpenAPI and documentation routes.
 
 At the time of this report:
 
-- `pytest -q`: 79 tests passed.
+- `pytest -q`: 97 tests passed.
 - `ruff check app reasoning_chain tests`: all checks passed.
 
 Coverage includes core routes, direct tools, malformed expressions, timezone behavior, tool
 retries, circuit breaking, reference resolution, bounded ReAct termination, session persistence,
-context compression, self-correction, grounded search, citation enforcement, trace listing, and
-mounted chain routes. LLM calls are mocked for deterministic CI.
+context compression, self-correction, grounded search, multi-format extraction and session isolation,
+citation enforcement, trace listing, and mounted chain routes. LLM calls are mocked for
+deterministic CI.
 
 ## 9. Remaining risks and recommended work
 

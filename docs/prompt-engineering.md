@@ -6,7 +6,7 @@ delimiters as production behavior rather than documentation-only concepts.
 ## Versioned system prompts
 
 `reasoning_chain/prompts.py` owns the prompt contracts for ReAct, decomposition, verification,
-and rolling summaries. Each contract has a version such as `react-v4`. New `ModelCall` traces
+and rolling summaries. Each contract has a version such as `react-v6`. New `ModelCall` traces
 record that version so prompt changes can be compared with temperature, token usage, tool choices,
 and outcomes. Historical traces remain compatible and show an empty or `N/A` version.
 

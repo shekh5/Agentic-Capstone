@@ -1,7 +1,8 @@
-# Agentic Capstone: Tool-Calling Service + Full CI/CD Pipeline
+# SuperAI: Grounded Agent + Full CI/CD Pipeline
 
 A FastAPI agent service with direct tool execution, a Gemini-powered ReAct loop,
-Google Search-grounded current answers, Redis-backed conversations and traces,
+Google Search-grounded current answers, session-persistent document retrieval,
+Redis-backed conversations and traces,
 browser interfaces, and a complete
 Git → Docker → GitHub Actions → EC2 delivery pipeline.
 
@@ -21,6 +22,7 @@ agentic-capstone/
 │   ├── chain.py              # ReAct loop orchestrator (Gemini)
 │   ├── context_compression.py # Loss-aware model-context compression
 │   ├── decisions.py          # Strict agent-decision and tool-input validation
+│   ├── documents.py          # Multi-format extraction, persistence, and retrieval
 │   ├── prompts.py            # Versioned XML prompts + few-shot examples
 │   ├── router.py             # /chain API routes + Redis persistence
 │   ├── schemas.py            # Pydantic data contracts
@@ -28,6 +30,7 @@ agentic-capstone/
 ├── tests/
 │   ├── test_app.py           # API endpoint tests
 │   ├── test_chain.py         # Reasoning chain logic tests
+│   ├── test_documents.py     # Multi-format extraction and retrieval tests
 │   ├── test_prompts.py       # Prompt contracts and XML boundary tests
 │   └── test_self_correction.py # Bounded correction and recovery tests
 ├── docs/
@@ -164,6 +167,20 @@ search; a corrected query must be selected explicitly by the agent. Configure a 
 model with `WEB_SEARCH_MODEL` if needed. See
 [docs/web-search-grounding.md](docs/web-search-grounding.md) for the flow and EC2 setup.
 
+### Session document questions
+
+In Reasoning Chain mode, the `Files` button accepts PDF, DOCX, TXT, Markdown, CSV, TSV, XLSX, and
+PPTX documents. The server applies a format-specific parser, creates overlapping chunks with
+page/slide/sheet/row/section locators, and persists them in Redis with a configurable TTL. Later
+questions using the same `session_id` retrieve only relevant chunks; generic explanation requests
+receive representative passages. Retrieved text is high-priority untrusted context, not
+conversation history, and a satisfied answer must preserve an exact source citation.
+
+This version deliberately uses local lexical retrieval, so it requires no embedding API or vector
+database. Scanned/image-only content returns an explicit OCR-required error. See
+[docs/document-rag.md](docs/document-rag.md) for endpoints, limits, storage keys, security
+constraints, and production extension guidance.
+
 ## Run tests
 
 ```bash
@@ -247,8 +264,8 @@ app.include_router(chain_router, prefix="/chain")
 ```
 
 The tool layer uses a bounded arithmetic parser, IANA timezone handling, optional
-WeatherAPI.com integration, Google Search grounding, retries, and a circuit breaker. Failure injection is
-off by default and can be enabled with `WEATHER_FAILURE_RATE` or
+WeatherAPI.com integration, Google Search grounding, retries, and a circuit breaker. Failure
+injection is off by default and can be enabled with `WEATHER_FAILURE_RATE` or
 `CALCULATOR_BAD_INPUT_RATE`, using values between `0` and `1`.
 
 ## Endpoints
@@ -260,6 +277,8 @@ off by default and can be enabled with `WEATHER_FAILURE_RATE` or
 - `GET /chain/traces` — list recent trace summaries.
 - `GET /chain/trace/{request_id}` — replay a past run from Redis.
 - `/chain/session/...` routes — save session metadata and conversation history.
+- `POST/GET /chain/session/{session_id}/documents` — upload or list session documents.
+- `DELETE /chain/session/{session_id}/documents/{document_id}` — delete extracted content.
 
 ## Try it locally
 

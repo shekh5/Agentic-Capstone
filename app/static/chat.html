@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agentic Capstone - Chat UI</title>
+  <title>SuperAI - Chat</title>
   <!-- Google Fonts: Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -249,10 +249,12 @@
     .input-row {
       display: flex;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .text-input {
       flex: 1;
+      min-width: 240px;
       background: rgba(15, 23, 42, 0.6);
       border: 1px solid var(--border-color);
       border-radius: 12px;
@@ -301,6 +303,21 @@
     .submit-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    .attach-btn {
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      border-radius: 12px;
+      color: #c7d2fe;
+      padding: 14px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .attach-btn:hover {
+      background: rgba(99, 102, 241, 0.22);
     }
 
     /* Reasoning Trace Visualizer */
@@ -471,7 +488,7 @@
     <!-- Sidebar -->
     <div class="sidebar">
       <div class="sidebar-header">
-        <h1>Agentic Capstone</h1>
+        <h1>SuperAI</h1>
         <p>Interactive Agent Playground</p>
       </div>
 
@@ -505,7 +522,7 @@
         <!-- Welcoming system message -->
         <div class="message agent">
           <div class="message-bubble">
-            Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, or fetch weather information.
+            Hello! I am SuperAI. Upload PDFs, Word files, text, spreadsheets, or presentations in Reasoning Chain mode, then ask questions about them now or later.
             <br/><br/>
             Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to solve a multi-step query iteratively!
           </div>
@@ -528,6 +545,7 @@
     let currentMode = 'chain'; // default to chain mode
     let currentSessionId = '';
     let sessions = [];
+    let activeDocuments = [];
     const TEMPERATURE_STORAGE_KEY = 'agentic_react_temperature';
     const SUPPORTED_TEMPERATURES = ['0.0', '0.1', '0.4', '0.7'];
 
@@ -572,6 +590,10 @@
             <option value="0.4" ${selectedTemperature === '0.4' ? 'selected' : ''}>Balanced · 0.4</option>
             <option value="0.7" ${selectedTemperature === '0.7' ? 'selected' : ''}>Exploratory · 0.7</option>
           </select>
+          <input id="document-input" type="file" accept=".pdf,.docx,.txt,.md,.csv,.tsv,.xlsx,.pptx" multiple hidden onchange="uploadDocuments(this.files)" />
+          <button type="button" class="attach-btn" id="document-upload-btn" onclick="document.getElementById('document-input').click()" title="Attach a document to this chat session">
+            Files${activeDocuments.length ? ` · ${activeDocuments.length}` : ''}
+          </button>
           <input type="text" id="goal-input" class="text-input" placeholder="e.g. Check the weather in Delhi and multiply the temp by 2" required />
           <button type="submit" class="submit-btn" id="send-btn">
             Analyze Goal
@@ -644,6 +666,7 @@
     async function startNewSession() {
       const sessionId = generateUUID();
       currentSessionId = sessionId;
+      activeDocuments = [];
       const createdAt = new Date().toISOString();
       
       const newSession = {
@@ -659,6 +682,7 @@
       await saveSessionMetadataToServer(sessionId, 'New Chat', createdAt);
       
       renderSidebar();
+      renderFormInputs();
       clearChatArea();
       appendSystemGreeting();
     }
@@ -683,7 +707,7 @@
     // Backup greeting fallback
     function appendSystemGreeting() {
       appendMessage('agent', 
-        `Hello! I am your agentic assistant. You can use me to evaluate expressions, query the current time, fetch weather information, or search the web for current answers with sources.
+        `Hello! I am SuperAI. Upload a PDF, DOCX, TXT, Markdown, CSV, XLSX, or PPTX file in Reasoning Chain mode and I can explain it or answer later questions with source citations. I can also calculate, query time and weather, or search the web.
         <br/><br/>
         Select <strong>Direct Agent</strong> to trigger individual tool functions manually, or <strong>Reasoning Chain</strong> to solve a multi-step query iteratively!`,
         'System',
@@ -791,6 +815,8 @@
     // Load past message bubbles from the Redis store
     async function selectSession(sessionId) {
       currentSessionId = sessionId;
+      await loadSessionDocuments();
+      renderFormInputs();
       renderSidebar();
       clearChatArea();
       
@@ -821,6 +847,55 @@
           const extraHtml = msg.trace ? buildTraceHtml(msg.trace, `trace-${generateUUID()}`) : '';
           appendMessage(msg.sender, msg.text, timeStr, extraHtml);
         });
+      }
+    }
+
+    async function loadSessionDocuments() {
+      if (!currentSessionId) {
+        activeDocuments = [];
+        return;
+      }
+      try {
+        const response = await fetch(`/chain/session/${currentSessionId}/documents`);
+        activeDocuments = response.ok ? await response.json() : [];
+      } catch (err) {
+        console.warn('Failed to load session documents:', err);
+        activeDocuments = [];
+      }
+    }
+
+    async function uploadDocuments(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length || !currentSessionId) return;
+      const uploadButton = document.getElementById('document-upload-btn');
+      if (uploadButton) {
+        uploadButton.disabled = true;
+        uploadButton.textContent = 'Processing...';
+      }
+      try {
+        for (const file of files) {
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await fetch(`/chain/session/${currentSessionId}/documents`, {
+              method: 'POST',
+              body: formData
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Document upload failed');
+            activeDocuments.push(data);
+            const unitCount = data.unit_count || data.page_count;
+            const unitLabel = data.unit_label || 'page';
+            const message = `Document ready: ${data.filename} (${unitCount} ${unitLabel}${unitCount === 1 ? '' : 's'}, ${data.chunk_count} searchable chunks).`;
+            appendMessage('agent', message);
+            cacheMessage('agent', message, new Date().toISOString());
+            await logManualMessage('agent', message);
+          } catch (error) {
+            appendMessage('agent', `Document error (${file.name}): ${error.message}`);
+          }
+        }
+      } finally {
+        renderFormInputs();
       }
     }
 

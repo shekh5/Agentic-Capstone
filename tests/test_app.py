@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from reasoning_chain.context import ContextBundle
+from reasoning_chain.documents import DocumentMetadata
 from reasoning_chain.schemas import ChainTrace, Plan, PlanStep, VerifyResult
 
 client = TestClient(app)
@@ -33,7 +34,7 @@ def test_chat_ui():
     r = client.get("/chat")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
-    assert "Agentic Capstone" in r.text
+    assert "SuperAI" in r.text
 
 
 def test_chat_ui_has_message_history_fallback():
@@ -57,6 +58,15 @@ def test_chat_ui_renders_grounding_links_safely():
     assert 'rel="noopener noreferrer"' in r.text
 
 
+def test_chat_ui_has_document_upload_and_session_document_loading():
+    r = client.get("/chat")
+    assert 'id="document-input"' in r.text
+    assert "uploadDocuments" in r.text
+    assert "multiple hidden" in r.text
+    assert ".docx,.txt,.md,.csv,.tsv,.xlsx,.pptx" in r.text
+    assert "/documents`" in r.text
+
+
 def test_dashboard_displays_web_search_sources():
     r = client.get("/dashboard")
     assert "call.response_payload.sources" in r.text
@@ -71,6 +81,7 @@ def test_dashboard_displays_prompt_version_telemetry():
     assert "context.compression_level" in r.text
     assert "selectedTrace.corrections" in r.text
     assert "selectedTrace.total_corrections" in r.text
+    assert "context.document_chunks_included" in r.text
 
 
 def test_compose_uses_durable_redis_storage():
@@ -224,6 +235,45 @@ def test_chain_run_persists_session_messages():
     clean_messages = [call.args[1] for call in mock_store.append.call_args_list]
     assert [message.role for message in clean_messages] == ["user", "model"]
     assert all(not hasattr(message, "trace") for message in clean_messages)
+
+
+def test_pdf_upload_endpoint_attaches_processed_document_to_session():
+    metadata = DocumentMetadata(
+        document_id="doc-1",
+        session_id="session-1",
+        filename="report.pdf",
+        page_count=2,
+        chunk_count=3,
+        extracted_chars=100,
+        created_at="2026-07-20T00:00:00+00:00",
+    )
+    mock_store = MagicMock()
+    mock_store.ingest.return_value = metadata
+
+    with patch("reasoning_chain.router._document_store", return_value=mock_store):
+        r = client.post(
+            "/chain/session/session-1/documents",
+            files={"file": ("report.pdf", b"%PDF-test", "application/pdf")},
+        )
+
+    assert r.status_code == 201
+    assert r.json()["document_id"] == "doc-1"
+    assert mock_store.ingest.call_args.args[:2] == ("session-1", "report.pdf")
+
+
+def test_pdf_upload_rejects_file_over_configured_limit():
+    with (
+        patch("reasoning_chain.router._document_store", return_value=MagicMock()),
+        patch("reasoning_chain.router.document_settings") as settings,
+    ):
+        settings.max_file_bytes = 4
+        r = client.post(
+            "/chain/session/session-1/documents",
+            files={"file": ("report.pdf", b"%PDF-test", "application/pdf")},
+        )
+
+    assert r.status_code == 400
+    assert "exceeds" in r.json()["detail"]
 
 
 def test_chain_traces_route_is_mounted():
